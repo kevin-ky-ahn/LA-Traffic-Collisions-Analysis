@@ -1,0 +1,46 @@
+---
+title: "Traffic Collisions Location Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Predicting Injury Severity
+```{r}
+```
+
+# Comparing Intersections to their Neighbors
+## Cleaning up AreaNames
+```{r}
+
+```
+
+## Cleaning up street names? It's more likely than you think
+```{r}
+
+```
+
+## Clustering - K Nearest Neighbors
+```{r}
+```
+
+## Analysis
+```{r}
+
+```
+
+

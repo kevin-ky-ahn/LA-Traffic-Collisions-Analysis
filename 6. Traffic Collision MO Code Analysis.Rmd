@@ -1,0 +1,1196 @@
+---
+title: "Traffic Collisions MO Code Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Load Data
+```{r}
+collisions_with_injury_type <- read.csv('Cleaned Data/CollisionsWithMOLabels.csv') %>%
+  mutate(
+    ReportedDate = as.Date(ReportedDate, format='%Y-%m-%d'),
+    OccurredDate = as.Date(OccurredDate, format='%Y-%m-%d'),
+    MostSevereInjuryReported = case_when(
+      FatalInjury ~ 'Fatal Injury',
+      SevereInjury ~ 'Severe Injury',
+      VisibleInjury ~ 'Visible Injury',
+      ComplaintOfInjury ~ 'Complaint of Injury',
+      NonInjury ~ 'No Injury',
+      TRUE ~ 'Unspecified'
+    )
+  )
+
+collisions_with_injury_type <- collisions_with_injury_type %>% mutate(
+    CollisionAtIntersection = case_when(
+      AtIntersection ~ 'At Intersection',
+      NotAtIntersection ~ 'Not At Intersection',
+      TRUE ~ 'Unspecified'
+    ))
+```
+# Misc Details
+```{r}
+# movement preceding collisions
+# city property
+# private property
+# unlicensed motorist
+# homeless victim
+```
+
+# Victim Demographics
+```{r}
+# histogram, map of proportion, map of mean, map by type
+# injury rates/severity
+```
+
+# Comparing Intersections
+```{r}
+# histogram, map of proportion, map by type
+# looking at relatively bad intersections (high number of collisions relative to nearby non-intersections)
+# injury rates/severity
+
+```
+
+## First round of analysis - preliminary, no real leads here
+```{r}
+# histogram
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    ggplot(aes(x=CollisionAtIntersection, fill=CollisionAtIntersection)) +
+    geom_histogram(stat='count') +
+    ggtitle('Number of Collisions at Intersection in 2024')
+)
+
+# scatterplots
+rounding_factor <- 1000
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor)) %>%
+    summarise(Collisions = n(),
+              ProportionAtIntersection = mean(AtIntersection)) %>%
+    ggplot(aes(x=ProportionAtIntersection, y=Collisions)) +
+    geom_point() +
+    ggtitle('Number of Collisions at Locations by Proportion at Intersection, 2024')
+)
+
+rounding_factor <- 1000
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor),
+             CollisionAtIntersection) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=Collisions, fill=CollisionAtIntersection)) +
+    geom_histogram(stat='count') +
+    facet_wrap(~CollisionAtIntersection) +
+    ggtitle('Histogram of Number of Collisions at Intersection in 2024')
+)
+
+# map
+rounding_factor <- 100
+print(
+  collisions_with_injury_type %>%
+    filter(year(OccurredDate) == 2024,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor)) %>%
+    summarise(Collisions = n(),
+              ProportionAtIntersection = mean(AtIntersection)) %>%
+    arrange(desc(Collisions)) %>%
+    ggplot(aes(x=RoundedLon, y=RoundedLat, color=ProportionAtIntersection,
+               size=Collisions)) +
+    geom_point() +
+    ggtitle('Number of Collisions at Location by Proportion At Intersection, 2024')
+)
+
+# bar chart of injury severity by intersection vs non-intersection
+print(
+  collisions_with_injury_type %>%
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude, 3), 
+             RoundedLon = round(Longitude, 3)) %>%
+    mutate(NumCollisionsAtIntersection = sum(as.numeric(AtIntersection)),
+           NumCollisionsNotAtIntersection = sum(as.numeric(NotAtIntersection))) %>%
+    ungroup() %>%
+    filter(NumCollisionsAtIntersection >= 5 |
+           NumCollisionsNotAtIntersection >= 1) %>%
+    group_by(CollisionAtIntersection, MostSevereInjuryReported) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=MostSevereInjuryReported, y=Collisions, fill=CollisionAtIntersection)) +
+    geom_bar(stat='identity') +
+    facet_wrap(~CollisionAtIntersection) +
+    ggtitle('Number of Collision Injuries by Severity, Intersection vs Non-Intersection, 2024')
+)
+```
+
+## Second round - more directed, hopefully more fruitful
+```{r}
+# looking to see whether intersections in general are more "dangerous" than non-intersections
+# in a given area with both intersection collisions and non-intersection collisions, which happen more frequently
+## i.e. what proportion of the collisions in these areas occurs at intersections
+
+# also, in those areas, are injuries more likely/severe at intersections or not
+
+# first, can we identify the right coordinates per intersection
+## Seems to be too much variance in what coordinates an address x cross street combo can be listed as, maybe by mistake
+## Should group by coordinates, and pick the nearest intersection by most common listing; round to nearest 1000th place
+collisions_with_injury_type %>% 
+  filter(AtIntersection) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude) %>% 
+  summarise(Count = 1) %>%
+  group_by(Address, CrossStreet) %>% 
+  summarise(Count=n()) %>%
+  arrange(desc(Count))
+
+# 33.942, -118.4095 is a problematic set of coordinates; it's LAX and encompasses a ton of nearby locations
+# There are some other coordinates that seem wrong
+collisions_with_injury_type %>%
+  mutate(NearestIntersection = paste0(Address, ' and ', CrossStreet)) %>%
+  group_by(RoundedLat = round(Latitude, 3),
+           RoundedLon = round(Longitude, 3),
+           NearestIntersection) %>%
+  summarise(Count = n()) %>%
+  group_by(RoundedLat, RoundedLon) %>%
+  summarise(Count = n()) %>% arrange(desc(Count))
+
+# trying again to round out the intersection areas by name and coordinates
+collisions_at_intersection_areas <- collisions_with_injury_type %>%
+  filter(Latitude != 0, Longitude != 0) %>%
+  mutate(
+    HasCrossStreet = as.numeric(!is.na(CrossStreet) & !(CrossStreet == '')),
+    NearestIntersection = ifelse(
+      HasCrossStreet,  paste0(Address, ' and ', CrossStreet), Address)) %>%
+  group_by(
+    HasCrossStreet, NearestIntersection,
+    RoundedLat = round(Latitude, 4),
+    RoundedLon = round(Longitude, 4)) %>%
+  summarise(Count = n(), 
+            ProportionListedAsAtIntersection = mean(AtIntersection),
+            ProportionListedAsNotAtIntersection = mean(NotAtIntersection),
+            NumCollisionsAtIntersection = sum(AtIntersection),
+            NumCollisionsNotAtIntersection = sum(NotAtIntersection),
+            ) %>%
+  arrange(desc(Count)) %>%
+  group_by(HasCrossStreet, RoundedLat, RoundedLon) %>%
+  summarise(
+    Collisions = sum(Count),
+    NumIntersections = n(),
+    NumCollisionsAtIntersection = sum(NumCollisionsAtIntersection),
+    NumCollisionsNotAtIntersection = sum(NumCollisionsNotAtIntersection),
+    ProportionListedAsAtIntersection = NumCollisionsAtIntersection/Collisions,
+    ProportionListedAsNotAtIntersection = NumCollisionsNotAtIntersection/Collisions,
+    NearestIntersections = paste(NearestIntersection, collapse=', ')
+  ) %>% 
+  mutate(
+    ListedAsIntersection = as.numeric(ProportionListedAsAtIntersection > 0),
+    ListedAsNotIntersection = as.numeric(ProportionListedAsNotAtIntersection > 0),
+    ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection > 
+                                    ProportionListedAsNotAtIntersection)
+  )
+  
+# besides a couple exceptions, it seems any location with a cross street and any collisions being listed 
+# at intersection should be labeled an intersection, 
+
+# comparing the possible outcomes
+collisions_at_intersection_areas %>%
+  group_by(ListedAsIntersection, ListedAsNotIntersection,
+           ListedMoreAsAtIntersection, HasCrossStreet) %>% 
+  summarise(Collisions = sum(Collisions))
+
+collisions_at_intersection_areas %>% 
+  filter(ListedAsIntersection == 1,
+         ListedAsNotIntersection == 1,
+         ListedMoreAsAtIntersection == 0,
+         HasCrossStreet == 0) %>% 
+  arrange(desc(Collisions))
+
+```
+
+```{r}
+# tracking the intersection labeling over time
+print(
+  collisions_with_injury_type %>% 
+    filter(OccurredDate >= '2013-01-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='weeks'),
+             CollisionAtIntersection) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=Collisions, color=CollisionAtIntersection)) +
+    geom_line()
+)
+
+# tracking the intersection labeling by location over time
+print(
+  collisions_with_injury_type %>% 
+    filter(OccurredDate >= '2013-01-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='weeks'),
+             RoundedLat = round(Latitude, 4),
+             RoundedLon = round(Longitude, 4)) %>%
+    summarise(
+      AtIntersection = max(AtIntersection),
+      NotAtIntersection = max(NotAtIntersection),
+    ) %>% 
+    mutate(
+      labeledAsIntersection = case_when(
+        AtIntersection == 1 & NotAtIntersection == 1 ~ 'Both',
+        AtIntersection == 1 ~ 'At Intersection',
+        NotAtIntersection == 1 ~ 'Not At Intersection',
+        TRUE ~ 'Unspecified'
+      )) %>% 
+    group_by(OccurredWeek, labeledAsIntersection) %>%
+    summarise(NumLocations = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=NumLocations, color=labeledAsIntersection)) +
+    geom_line()
+)
+```
+
+```{r}
+collisions_with_injury_type %>% 
+  filter(round(Latitude, 3) == 33.989, round(Longitude, 3) == -118.309) %>%
+  select(ReportingDistrict, AtIntersection, NotAtIntersection)
+
+collisions_with_injury_type %>% distinct(Address)
+
+collision_mo_codes %>% 
+  filter(Latitude == 33.9470, Longitude == -118.2684) %>% 
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% 
+  summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+```
+## Trying this again, without street names
+```{r}
+identifying_intersections <- collisions_with_injury_type %>%
+  filter(Latitude != 0, Longitude != 0) %>%
+  mutate(
+    HasCrossStreet = as.numeric(!is.na(CrossStreet) & 
+                                  !(CrossStreet == ''))) %>%
+  group_by(
+    RoundedLat = round(Latitude, 4),
+    RoundedLon = round(Longitude, 4)) %>%
+  summarise(Collisions = n(), 
+            NumCollisionsWithCrossStreet = sum(HasCrossStreet),
+            NumCollisionsAtIntersection = sum(AtIntersection),
+            NumCollisionsNotAtIntersection = sum(NotAtIntersection),
+            ProportionListedWithCrossStreet = mean(HasCrossStreet),
+            ProportionListedAsAtIntersection = mean(AtIntersection),
+            ProportionListedAsNotAtIntersection = mean(NotAtIntersection),
+            HasCrossStreet = max(HasCrossStreet),
+            ListedAsIntersection = max(AtIntersection),
+            ListedAsNotIntersection = max(NotAtIntersection),
+            ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection >
+                                            ProportionListedAsNotAtIntersection)
+    ) %>% ungroup()
+
+identifying_intersections %>% 
+  filter(HasCrossStreet == 0, ListedAsIntersection == 1) %>%
+  arrange(desc(Collisions))
+
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0) %>%
+  arrange(desc(Collisions))
+
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0) %>%
+  arrange(desc(NumCollisionsNotAtIntersection))
+
+# Basically, if the coordinates are ever listed with a CrossStreet, they are at an intersection
+```
+
+```{r}
+collisions_with_labeled_intersections <- collisions_with_injury_type %>%
+  # filter(Latitude != 0, Longitude != 0) %>%
+  select(-CollisionAtIntersection) %>%
+  left_join(
+    identifying_intersections %>% 
+      mutate(CollisionAtIntersection = ifelse(HasCrossStreet %>% is.na(), 0, HasCrossStreet), 
+             Latitude = RoundedLat, Longitude = RoundedLon) %>%
+      select(Latitude, Longitude, CollisionAtIntersection, ListedAsIntersection),
+    by = c('Latitude', 'Longitude')
+  ) %>%
+  mutate(
+    CollisionAtIntersection = ifelse(is.na(CollisionAtIntersection), 
+                                     as.numeric(CrossStreet != ''), 
+                                     CollisionAtIntersection),
+    OccurredYear = year(OccurredDate)
+  )
+
+```
+
+## Finally examining the intersections vs non-intersections
+```{r}
+print(
+  collisions_with_labeled_intersections %>% 
+    filter(OccurredDate >= '2013-01-01',
+           OccurredDate < '2025-03-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='months'),
+             CollisionAtIntersection = ifelse(CollisionAtIntersection == 1, 
+                                              'At Intersection', 'Not at Intersection')) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=Collisions, 
+               color=as.factor(CollisionAtIntersection))) +
+    geom_line() +
+    guides(
+      colour = guide_legend(
+        title = "Collision Location"
+        #, theme = theme(legend.title = element_text(hjust = 0))
+      )
+    )
+)
+```
+
+```{r}
+print(
+  collisions_with_labeled_intersections %>% 
+    filter(OccurredDate >= '2013-01-01',
+           OccurredDate < '2025-03-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='months'),
+             CollisionAtIntersection = 
+               case_when(CollisionAtIntersection == 1 & ListedAsIntersection == 1 ~ 'At Intersection', 
+                         CollisionAtIntersection == 1 ~ 'Near Intersection',
+                         TRUE ~ 'Not at Intersection')) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=Collisions, 
+               color=as.factor(CollisionAtIntersection))) +
+    geom_line() +
+    guides(
+      colour = guide_legend(
+        title = "Collision Location"
+        #, theme = theme(legend.title = element_text(hjust = 0))
+      )
+    )
+)
+```
+
+## Double-checking that I've re-labeled intersections correctly
+```{r}
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0, ListedAsNotIntersection == 1) %>%
+  arrange(desc(NumCollisionsNotAtIntersection))
+# Far as I can tell, the vast majority of coordinates listed with CrossStreets point to intersections
+```
+
+```{r}
+# Check the MO Codes of one of these re-labeled intersections that looks iffy
+collision_mo_codes %>% 
+  filter(!is.na(MOCode), Latitude == 34.1589, Longitude ==	-118.4994) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+```
+
+## Back to looking into comparing intersections vs non-intersections
+Seeing how often intersections have crashes in the vicinity that aren't at intersections - basically none
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(year(OccurredDate) == 2024,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(RoundedLat = round(Latitude, 3), 
+             RoundedLon = round(Longitude, 3)) %>%
+    summarise(NumCollisionsAtIntersection = sum(as.numeric(CrossStreet != '')),
+              NumCollisionsNotAtIntersection = sum(as.numeric(CrossStreet == '')),
+              ProportionAtIntersection = round(NumCollisionsAtIntersection/
+                (NumCollisionsAtIntersection + NumCollisionsNotAtIntersection), 2)) %>%
+    ggplot(aes(x=ProportionAtIntersection)) +
+    geom_histogram(stat='count')
+)
+```
+
+Comparing the severity of crashes at intersections vs non-intersections
+FINALLY getting somewhere
+Maybe needs error bars
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(OccurredYear == 2024) %>%
+    mutate(WasCollisionAtIntersection = ifelse(CollisionAtIntersection == 1, 
+                                               'At Intersection', 'Not at Intersection')) %>%
+    group_by(WasCollisionAtIntersection) %>%
+    mutate(TotalCollisions = n()) %>%
+    group_by(WasCollisionAtIntersection, 
+             MostSevereInjuryReported = factor(
+               MostSevereInjuryReported, levels = c('No Injury', 'Complaint of Injury', 'Visible Injury',
+                                                    'Severe Injury', 'Fatal Injury', 'Unspecified'))) %>%
+    summarise(InjuryRate = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=MostSevereInjuryReported, y=InjuryRate, fill=WasCollisionAtIntersection)) +
+    geom_bar(stat='identity') +
+    facet_wrap(~WasCollisionAtIntersection) +
+    theme(axis.text.x = element_text(angle = 70, vjust = 1, hjust=1))
+)
+```
+### Looking for dangerous intersections
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(OccurredYear == 2024,
+           CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>% 
+    mutate(TotalCollisions = n()) %>%
+    ungroup() %>%
+    filter(TotalCollisions > 5) %>%
+    group_by(Latitude, Longitude, 
+             MostSevereInjuryReported = factor(MostSevereInjuryReported, 
+                                               levels = c('No Injury', 'Complaint of Injury', 'Visible Injury',
+                                                          'Severe Injury', 'Fatal Injury', 'Unspecified'))) %>%
+    summarise(InjuryRate = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=InjuryRate, fill=MostSevereInjuryReported)) +
+    geom_histogram(binwidth = 0.1) +
+    facet_wrap(~MostSevereInjuryReported)
+)
+```
+
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(
+      # OccurredYear == 2024,
+      CollisionAtIntersection == 1,
+      Latitude != 0, Longitude != 0) %>%
+    group_by(
+      RoundedLat = round(Latitude, 4), 
+      RoundedLon = round(Longitude, 4)) %>%
+    summarise(Collisions = n(), 
+              NonInjuries = sum(as.numeric(NonInjury)),
+              Injuries = sum(as.numeric(InjuryInvolved))) %>%
+    ggplot(aes(x=Collisions, y=Injuries)) +
+    geom_point()
+)
+```
+```{r}
+collisions_with_labeled_intersections %>%
+  filter(
+    # OccurredYear == 2024,
+    CollisionAtIntersection == 1,
+    Latitude != 0, Longitude != 0) %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(Collisions = n(), 
+            Injuries = sum(as.numeric(InjuryInvolved)),
+            InjuryRate = mean(as.numeric(InjuryInvolved)),
+            VisibleInjuryRate = mean(as.numeric(VisibleInjury)),
+            SevereInjuryRate = mean(as.numeric(SevereInjury))
+            ) %>%
+  filter(Collisions > 50) %>%
+  arrange(desc(InjuryRate))
+```
+## Looking into that bump in non-intersection collisions around COVID?
+```{r}
+
+```
+
+# Collision Object
+```{r}
+# histogram, map of proportion, map of most common, map by type
+# injury rates/severity
+collisions_by_object <- collisions_with_labeled_intersections %>%
+    filter(CollisionWithVehicle) %>%
+    mutate(CollisionObject = 'Vehicle') %>% 
+  rbind(
+    collisions_with_labeled_intersections %>%
+      filter(CollisionWithParkedVehicle) %>%
+      mutate(CollisionObject = 'Parked Vehicle')
+  ) %>% 
+  rbind(
+    collisions_with_labeled_intersections %>%
+      filter(CollisionWithFixedObject) %>%
+      mutate(CollisionObject = 'Fixed Object')
+  ) %>% 
+  rbind(
+    collisions_with_labeled_intersections %>%
+      filter(CollisionWithPedestrian) %>%
+      mutate(CollisionObject = 'Pedestrian')
+  ) %>% 
+  rbind(
+    collisions_with_labeled_intersections %>%
+      filter(CollisionWithBike) %>%
+      mutate(CollisionObject = 'Bike') 
+  ) %>% 
+  rbind(
+    collisions_with_labeled_intersections %>%
+      filter(CollisionWithOtherObject) %>%
+      mutate(CollisionObject = 'Other') 
+  ) %>% 
+  select(CollisionObject, OccurredDate, OccurredYear, Latitude, Longitude, 
+         CollisionAtIntersection, InjuryInvolved, MostSevereInjuryReported,
+         NonInjury, ComplaintOfInjury, VisibleInjury, SevereInjury, FatalInjury)
+```
+
+```{r}
+print(
+  collisions_by_object %>%
+    filter(OccurredYear == 2024) %>%
+    group_by(CollisionObject) %>%
+    summarise(InjuryRate = mean(InjuryInvolved, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=InjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity')
+)
+
+print(
+  collisions_by_object %>%
+    filter(OccurredYear == 2024) %>%
+    mutate(SevereOrFatalInjury = as.numeric(SevereInjury | FatalInjury)) %>%
+    group_by(CollisionObject) %>%
+    summarise(SevereOrFatalInjuryRate = mean(SevereOrFatalInjury, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=SevereOrFatalInjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    scale_y_continuous(labels = scales::percent) +
+    labs(x='Collision Object', y='Severe/Fatal Injury Rate') +
+    theme(legend.position='none') +
+    ggtitle('Severe/Fatal Injury Rate by Collision Object in LA, 2024')
+)
+
+print(
+  collisions_by_object %>%
+    filter(OccurredYear == 2024) %>%
+    group_by(CollisionObject, CollisionAtIntersection) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=CollisionObject, y=Collisions, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    facet_wrap(~CollisionAtIntersection)
+)
+```
+## Finding the intersections with the most/highest rate of pedestrian or bike collisions
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      PedestrianCollisionRate = round(mean(CollisionWithPedestrian), 2)) %>%
+    filter(Collisions > 50) %>%
+    arrange(desc(PedestrianCollisionRate)) %>%
+    ggplot(aes(x=PedestrianCollisionRate)) +
+    geom_histogram()
+)
+
+print(
+  collisions_with_labeled_intersections %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      PedestrianCollisions = sum(CollisionWithPedestrian)) %>%
+    filter(Collisions > 50) %>%
+    arrange(desc(PedestrianCollisions)) %>%
+    ggplot(aes(x=PedestrianCollisions)) +
+    geom_histogram()
+)
+
+```
+## Map of pedestrian collision hotspots
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      PedestrianCollisions = sum(CollisionWithPedestrian),
+      PedestrianCollisionRate = mean(CollisionWithPedestrian)
+    ) %>%
+    filter(Collisions >= 50) %>%
+    mutate(
+      PedestrianCollisionHotspot = case_when(
+        PedestrianCollisions >= 25 & PedestrianCollisionRate >= 0.15 ~ 'High Rate and Volume',
+        PedestrianCollisions >= 25 ~ 'High Volume',
+        PedestrianCollisionRate >= 0.15 ~ 'High Rate',
+        TRUE ~ 'Not Pedestrian Collision Hotspot'
+      )
+    ) %>%
+    group_by(PedestrianCollisionHotspot) %>% mutate(Total = n()) %>% ungroup() %>%
+    arrange(desc(Total)) %>%
+    ggplot(aes(x=Longitude, y=Latitude, color=PedestrianCollisionHotspot)) +
+    geom_point(size=1.7) +
+    labs(x='', y='', color='Is Hotspot for\nPedestrian Collisions') +
+    ggtitle('Map of Pedestrian Collisions Hotspots, LA')
+)
+```
+
+
+# Defining Functions for Future Analysis
+```{r}
+intro_graphs <- function(graph_data, field_name, label=field_name, year=2024, text_size=5) {
+  # rename column
+  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
+  
+  # histogram
+  if (local(year) == 'all') {
+    print(graph_data %>%
+            filter(OccurredDate >= '2013-01-01',
+                   OccurredDate < '2025-01-01') %>%
+            group_by(TargetFeature) %>%
+            summarise(Collisions = n()) %>%
+            ggplot(aes(x=TargetFeature, y=Collisions, fill=TargetFeature)) +
+            geom_bar(stat='identity') +
+            theme_set(theme_gray(base_size = text_size)) +
+            theme(axis.text.x = element_blank()) +
+            labs(x=local(label), y='Collisions', fill=local(label)) +
+            ggtitle(paste('Number of Collisions by ', label, ', 2013-2024', sep='')))
+  } else {
+    print(graph_data %>%
+            filter(OccurredYear == local(year)) %>%
+            group_by(TargetFeature) %>%
+            summarise(Collisions = n()) %>%
+            ggplot(aes(x=TargetFeature, y=Collisions, fill=TargetFeature)) +
+            geom_bar(stat='identity') +
+            theme_set(theme_gray(base_size = text_size)) +
+            theme(axis.text.x = element_blank()) +
+            labs(x=local(label), y='Collisions', fill=local(label)) +
+            ggtitle(paste('Number of Collisions by ', label, ', ', year, sep='')))
+  }
+  
+  # number over time
+  print(graph_data %>%
+          filter(OccurredDate >= '2013-01-01',
+                 OccurredDate < '2025-03-01') %>%
+          group_by(OccurredDate = floor_date(OccurredDate, unit='months'), TargetFeature) %>%
+          summarise(Collisions = n()) %>%
+          ggplot(aes(x=OccurredDate, y=Collisions, color=TargetFeature)) +
+          geom_line() +
+          labs(x='Date of Collisions', y='Collisions', color=local(label)) +
+          theme_set(theme_gray(base_size = text_size)) +
+          ggtitle(paste('Number of Collisions over Time by', label)))
+  
+  # rate over time
+  print(graph_data %>%
+          filter(OccurredDate >= '2013-01-01',
+                 OccurredDate < '2025-03-01') %>%
+          group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+          mutate(TotalCollisions = n()) %>% ungroup() %>%
+          group_by(OccurredDate, TargetFeature) %>%
+          summarise(Proportion = n()/first(TotalCollisions)) %>%
+          ggplot(aes(x=OccurredDate, y=Proportion, color=TargetFeature)) +
+          geom_line() +
+          labs(x='Date of Collisions', y='Proportion of Collisions', color=local(label)) + 
+          scale_y_continuous(labels = scales::percent) +
+          theme_set(theme_gray(base_size = text_size)) +
+          ggtitle(paste('Proportion of Collisions over Time by', label)))
+}
+
+mapping_hotspots <- function(graph_data, field_name, label=field_name,
+                             year='all', high_percentile=95, text_size=5, dot_size=1) {
+  # rename column
+  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
+  
+  if (year != 'all') {
+    graph_data <- graph_data %>% filter(OccurredYear == local(year))
+    collision_threshold <- 10
+    year_label <- year
+  } else {
+    graph_data <- graph_data %>% filter(OccurredDate >= '2013-01-01', 
+                                        OccurredDate < '2025-01-01')
+    collision_threshold <- 50
+    year_label <- '2013-2024'
+  }
+  
+  grouped_data <- graph_data %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      TargetFeatureRate = round(mean(TargetFeature), 2),
+      TargetFeatureCount = sum(TargetFeature)) %>%
+    filter(Collisions > local(collision_threshold))
+
+  feature_percentiles <- grouped_data %>%
+    group_by(1) %>%
+    mutate(CountNTile = ntile(TargetFeatureCount, 100),
+           RateNTile = ntile(TargetFeatureRate, 100)) %>%
+    ungroup()
+  
+  count_percentile <- (feature_percentiles %>% 
+                        filter(CountNTile == local(high_percentile)) %>% 
+                        summarise(Threshold = min(TargetFeatureCount)))$Threshold[1]
+  rate_percentile <- (feature_percentiles %>% 
+                        filter(RateNTile == local(high_percentile)) %>% 
+                        summarise(Threshold = min(TargetFeatureRate)))$Threshold[1]
+
+  # histogram of collisions by intersection
+  print(
+    grouped_data %>%
+      arrange(desc(TargetFeatureCount)) %>%
+      ggplot(aes(x=TargetFeatureCount)) +
+      geom_histogram(bins=25) +
+      geom_vline(xintercept=local(count_percentile), linetype='dashed') +
+      labs(x=paste('Collisions Involving ', label, sep=''), y='Number of Intersections') +
+      theme_set(theme_gray(base_size = text_size)) +
+      ggtitle(paste('Number of Collisions Involving ', label, ' by Intersection, ', year_label, sep=''),
+              subtitle=paste(high_percentile, 'th Percentile: ', count_percentile, ' Collisions', sep=''))
+  )
+  
+  # histogram of rates by intersection
+  print(
+    grouped_data %>%
+      arrange(desc(TargetFeatureRate)) %>%
+      ggplot(aes(x=TargetFeatureRate)) +
+      geom_histogram(bins=25) +
+      geom_vline(xintercept=local(rate_percentile), linetype='dashed') +
+      scale_x_continuous(labels=scales::percent) +
+      labs(x=paste('Rate of Collisions Involving ', label, sep=''), y='Number of Intersections') +
+      theme_set(theme_gray(base_size = text_size)) +
+      ggtitle(paste('Rate of Collisions Involving ', label, ' by Intersection, ', year_label, sep=''),
+              subtitle=paste(high_percentile, 'th Percentile: ', rate_percentile*100, '%', sep=''))
+  )
+
+  # mapping hotspots
+  print(
+    grouped_data %>%
+      mutate(
+        Hotspot = factor(case_when(
+          TargetFeatureCount >= local(count_percentile) & 
+            TargetFeatureRate >= local(rate_percentile) ~ 'High Rate and Volume',
+          TargetFeatureCount >= local(count_percentile) ~ 'High Volume',
+          TargetFeatureRate >= local(rate_percentile) ~ 'High Rate',
+          TRUE ~ 'Not a Hotspot'
+        ), levels=c('High Rate and Volume', 'High Volume', 'High Rate', 'Not a Hotspot'))
+      ) %>%
+      arrange(desc(Hotspot)) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Hotspot)) +
+      geom_point(size=dot_size) +
+      labs(x='', y='', color='') +
+      theme_set(theme_gray(base_size = text_size)) +
+      ggtitle(paste('Map of Hotspots for Collisions Involving ', label, ', ', year_label, sep=''))
+  )
+}
+
+graphing_injury_rates <- function(graph_data, field_name, label1=field_name,
+                                  label2=label1, year=2024, text_size=5) {
+  # rename column
+  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
+
+  if (year != 'all') {
+    graph_data <- graph_data %>% filter(OccurredYear == local(year))
+    year_label <- year
+  } else {
+    graph_data <- graph_data %>% filter(OccurredDate >= '2013-01-01', 
+                                        OccurredDate < '2025-01-01')
+    year_label <- '2013-2024'
+  }
+  
+  ## proportion of hit and run severity by injury outcome
+  print(
+    graph_data %>%
+      group_by(TargetFeature) %>%
+      mutate(TotalCollisions = n()) %>% ungroup() %>%
+      group_by(TargetFeature, MostSevereInjuryReported) %>%
+      summarise(Proportion = n()/first(TotalCollisions)) %>%
+      ggplot(aes(x=TargetFeature, y=Proportion, fill=TargetFeature)) +
+      geom_bar(stat='identity', position='dodge') +
+      labs(x='', y='Proportion of Collisions', fill=label1) +
+      scale_y_continuous(labels = scales::percent) +
+      facet_wrap(~MostSevereInjuryReported) +
+      theme_set(theme_gray(base_size = text_size)) +
+      theme(axis.text.x = element_blank()) +
+      ggtitle(paste('Distribution of Injury Outcomes by ', label1, ', ', year_label, sep=''))
+  )
+  
+  ## proportion of injury outcome by hit and run severity
+  print(
+    graph_data %>%
+      group_by(MostSevereInjuryReported) %>%
+      mutate(TotalCollisions = n()) %>% ungroup() %>%
+      group_by(TargetFeature, MostSevereInjuryReported) %>%
+      summarise(Proportion = n()/first(TotalCollisions)) %>%
+      ggplot(aes(x=TargetFeature, y=Proportion, fill=TargetFeature)) +
+      geom_bar(stat='identity', position = position_dodge2(width = 0.9, preserve = "single")) +
+      labs(x='', y='Proportion of Collisions', fill=label1) +
+      scale_y_continuous(labels = scales::percent) +
+      facet_wrap(~MostSevereInjuryReported) +
+      theme_set(theme_gray(base_size = text_size)) +
+      theme(axis.text.x = element_blank()) +
+      ggtitle(paste('Distribution of ', label2, ' Causes by Injury Severity, ', year_label, sep=''))
+  )
+}
+```
+
+# Injury Type
+```{r, fig.height=2, fig.width=4}
+intro_graphs(collisions_with_labeled_intersections, 'MostSevereInjuryReported', 
+             label='Injury Severity', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of hit and runs
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 
+                 'FatalInjury', label='Fatal Injuries')
+
+mapping_hotspots(collisions_with_labeled_intersections, 
+                 'SevereInjury', label='Severe Injuries')
+```
+
+# Collision Object
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+        mutate(MostVulnerableCollisionObject = factor(case_when(
+          CollisionWithPedestrian ~ 'Pedestrian', 
+          CollisionWithBike ~ 'Bike',
+          CollisionWithOtherObject ~ 'Other Object',
+          CollisionWithVehicle ~ 'Vehicle',
+          CollisionWithFixedObject ~ 'Fixed Object',
+          CollisionWithParkedVehicle ~ 'Parked Vehicle',
+          TRUE ~ 'Unknown'),
+          levels = c('Pedestrian', 'Bike', 'Vehicle', 'Fixed Object',
+                     'Parked Vehicle', 'Other Object')))
+
+intro_graphs(collisions_with_labeled_intersections, 'MostVulnerableCollisionObject', 
+             label='Collision Object', year=2024)
+```
+
+## Finding the intersections with the most/highest rate of pedestrian/bike collisions
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 
+                 'CollisionWithPedestrian', label='Collision w/ Pedestrians')
+
+mapping_hotspots(collisions_with_labeled_intersections, 
+                 'CollisionWithBike', label='Collision w/ Bikes')
+```
+
+## Injuries by collision object
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'MostVulnerableCollisionObject', 
+                      label1='Collision Object', label2='Collision Object')
+
+graphing_injury_rates(collisions_with_labeled_intersections, 'CollisionWithPedestrian', 
+                      label1='Collision w/ Pedestrians', label2='Collision w/ Pedestrians')
+```
+
+# Hit and Runs
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+        mutate(HitAndRunSeverity = factor(case_when(
+          HitAndRunFelony ~ 'Hit & Run Felony', 
+          HitAndRunMisdemeanor ~ 'Hit & Run Misdemeanor',
+          HitAndRun ~ 'Other Hit & Run',
+          TRUE ~ 'Not Labelled Hit & Run'),
+          levels = c('Hit & Run Felony', 'Hit & Run Misdemeanor',
+                     'Other Hit & Run', 'Not Labelled Hit & Run')))
+
+intro_graphs(collisions_with_labeled_intersections, 'HitAndRunSeverity', 
+             label='Hit & Run Severity', year=2024)
+
+intro_graphs(collisions_with_labeled_intersections, 'HitAndRun', 
+             label='Hit & Run', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of hit and runs
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'HitAndRun', label='Hit & Runs')
+```
+
+## Injuries from hit & runs
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'HitAndRunSeverity', 
+                      label1='Hit & Run Severity', label2='Hit & Run')
+
+graphing_injury_rates(collisions_with_labeled_intersections, 'HitAndRun', 
+                      label1='Hit & Run', label2='Hit & Run')
+```
+
+# DUIs
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+        mutate(DUI = (DUIMisdemeanor | DUIFelony),
+               DUISeverity = factor(case_when(
+                 DUIFelony ~ 'DUI Felony', 
+                 DUIMisdemeanor ~ 'DUI Misdemeanor',
+                 Sobriety ~ 'Sobriety',
+                 TRUE ~ 'Unspecified'),
+                 levels = c('DUI Felony', 'DUI Misdemeanor',
+                            'Sobriety', 'Unspecified')))
+
+intro_graphs(collisions_with_labeled_intersections, 'DUISeverity', 
+             label='DUI Severity', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of hit and runs
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'DUI', label='DUIs')
+```
+
+## Injuries from hit & runs
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'DUISeverity', 
+                      label1='DUI Severity', label2='DUI')
+
+graphing_injury_rates(collisions_with_labeled_intersections, 'DUI', 
+                      label1='DUI', label2='DUI')
+```
+
+# Private Property Involved
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+        mutate(PrivatePropertyInvolvement = factor(case_when(
+                 PrivatePropertyInvolved ~ 'Involved', 
+                 PrivatePropertyNotInvolved ~ 'Not Involved',
+                 TRUE ~ 'Unspecified'),
+                 levels = c('Involved', 'Not Involved', 'Unspecified')))
+
+intro_graphs(collisions_with_labeled_intersections, 'PrivatePropertyInvolvement', 
+             label='Private Property Involved', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of hit and runs
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'PrivatePropertyInvolved', label='Private Property')
+```
+
+## Injuries from hit & runs
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'PrivatePropertyInvolved', 
+                      label1='Private Property Involvement', label2='Private Property Collision')
+```
+
+# Public Property Involved
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+        mutate(CityePropertyInvolvement = factor(case_when(
+                 CityPropertyInvolved ~ 'Involved', 
+                 CityPropertyNotInvolved ~ 'Not Involved',
+                 TRUE ~ 'Unspecified'),
+                 levels = c('Involved', 'Not Involved', 'Unspecified')))
+
+intro_graphs(collisions_with_labeled_intersections, 'CityePropertyInvolvement', 
+             label='City Property Involvement', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of public property involvement
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'CityPropertyInvolved', label='City Property')
+```
+
+## Injuries from public property collisions
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'CityePropertyInvolvement', 
+                      label1='City Property Involvement', label2='City Property Collision')
+```
+
+# Unlicensed Motorists
+```{r, fig.height=2, fig.width=4}
+intro_graphs(collisions_with_labeled_intersections, 'UnlicensedMotorist', 
+             label='Unlicenced Motorist', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of unlicensed motorists
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'UnlicensedMotorist', label='Unlicenced Motorists')
+```
+
+## Injuries from unlicensed motorists
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'UnlicensedMotorist', 
+                      label1='Unlicensed Motorist')
+```
+
+# Homeless Victim
+```{r, fig.height=2, fig.width=4}
+intro_graphs(collisions_with_labeled_intersections, 'HomelessVictim', 
+             label='Homeless Victim', year=2024)
+```
+
+
+## Finding the intersections with the most/highest rate of homeless victimes
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 'HomelessVictim', label='Homeless Victims')
+```
+
+## Injuries to homeless victims
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'HomelessVictim', 
+                      label1='Homeless Victim')
+```
+
+# Victim Descent
+```{r, fig.height=2, fig.width=4}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+  mutate(
+    VictimEthnicity = case_when(
+      VictimDescent == 'H' ~ 'Hispanic/Latino',
+      VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
+      VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
+      VictimDescent == 'B' ~ 'Black American',
+      VictimDescent == 'W' ~ 'White',
+      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other/Unknown',
+      VictimDescent == 'I' ~ 'Native American/Alaskan',
+      TRUE ~ '?'
+      ),
+    HispanicOrLatinoVictim = (VictimEthnicity == 'Hispanic/Latino')
+    )
+
+intro_graphs(collisions_with_labeled_intersections, 'VictimEthnicity', 
+             label='Victim Ethnicity', year=2024)
+
+# Descent Code: A - Other Asian B - Black C - Chinese D - Cambodian F - Filipino G - Guamanian H - Hispanic/Latin/Mexican I - American Indian/Alaskan Native J - Japanese K - Korean L - Laotian O - Other P - Pacific Islander S - Samoan U - Hawaiian V - Vietnamese W - White X - Unknown Z - Asian Indian
+```
+
+
+## Finding the intersections with the most/highest rate of Hispanic victims
+```{r, fig.height=2, fig.width=4}
+mapping_hotspots(collisions_with_labeled_intersections, 
+                 'HispanicOrLatinoVictim', label='Hispanic/Latino Victims')
+```
+
+## Injuries by Victim Ethnicity
+```{r, fig.height=2, fig.width=4}
+graphing_injury_rates(collisions_with_labeled_intersections, 'VictimEthnicity', 
+                      label1='Victim Ethnicity')
+```
+
+# Tracking Number of MOCodes over Time
+```{r}
+collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+  # select(-NumMOCodes) %>%
+  left_join(collisions_with_labeled_intersections %>% 
+              mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
+              separate_rows(MOCode, convert=TRUE) %>%
+              group_by(DRKey) %>% summarise(NumMOCodes = n_distinct(MOCode)), by='DRKey')
+```
+
+```{r, fig.height=2, fig.width=4}
+print(collisions_with_labeled_intersections %>%
+        filter(OccurredDate >= '2013-01-01',
+               OccurredDate < '2025-03-01') %>%
+        group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+        summarise(AvgNumMOCodes = mean(NumMOCodes, na.rm=TRUE)) %>%
+        ggplot(aes(x=OccurredDate, y=AvgNumMOCodes)) +
+        geom_line() +
+        labs(x='Date of Collisions', y='Number of MO Codes') +
+        theme_set(theme_gray(base_size = 5)) +
+        ggtitle('Avg Number of MO Codes over Time'))
+```
+
+```{r}
+collision_mo_codes_labeled <- collision_mo_codes %>% 
+  filter(!is.na(MOCode)) %>%
+  left_join(
+    collision_mo_codes %>% group_by(MOCode) %>%
+      summarise(TotalCollisions = n()) %>%
+      arrange(desc(TotalCollisions)) %>%
+      mutate(Rank=row_number()) %>% select(-TotalCollisions), by='MOCode') %>%
+  left_join(mo_code_descriptions, by='MOCode')
+
+print(
+  collision_mo_codes_labeled %>%
+    mutate(Description = ifelse(Rank > 10, 'Other', Description)) %>%
+    group_by(Description, OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+    summarise(TotalCollisions = n_distinct(DRKey)) %>%
+    ggplot(aes(x=OccurredDate, y=TotalCollisions, color=Description)) +
+    geom_line()
+)
+
+collision_mo_codes_pre_post_covid <- collision_mo_codes_labeled %>%
+  filter(OccurredDate < '2020-01-01' | OccurredDate >= '2021-01-01') %>%
+  mutate(TimePeriod = ifelse(OccurredDate < '2020-01-01', 'Pre-COVID', 'Post-COVID'),
+         PreCOVIDCollision = ifelse(TimePeriod == 'Pre-COVID', DRKey, NA),
+         PostCOVIDCollision = ifelse(TimePeriod == 'Post-COVID', DRKey, NA)) %>%
+  group_by(1) %>%
+  mutate(
+    TotalPreCOVIDCollisions = n_distinct(PreCOVIDCollision),
+    TotalPostCOVIDCollisions = n_distinct(PostCOVIDCollision)
+  ) %>% ungroup() %>%
+  mutate(Description = ifelse(Rank > 20, 'Other', Description)) %>%
+  group_by(Description) %>%
+  summarise(
+    PreCOVIDCollisions = n_distinct(PreCOVIDCollision),
+    PostCOVIDCollisions = n_distinct(PostCOVIDCollision),
+    ProportionPreCOVID = PreCOVIDCollisions/first(TotalPreCOVIDCollisions),
+    ProportionPostCOVID = PostCOVIDCollisions/first(TotalPostCOVIDCollisions),
+    ChangeInProportion = ProportionPostCOVID - ProportionPreCOVID
+  )
+
+print(
+  collision_mo_codes_pre_post_covid %>%
+    ggplot(aes(x=ChangeInProportion, y=Description, fill=Description)) +
+    geom_bar(stat='identity') +
+    scale_x_continuous(label=scales::percent) +
+    theme_set(theme_gray(base_size = 8)) +
+    theme(legend.position='none') +
+    labs(y='', x='Change in Proportion') +
+    ggtitle('Shift in Proportion of Collisions Labelled, Pre- and Post-COVID')
+)
+
+```
+
+## Proportion of collisions w/ conflicting MO codes over time
+```{r}
+collision_mo_codes_labeled %>%
+  group_by(MOCode, Description) %>%
+  summarise(TotalCollisions = n_distinct(DRKey)) %>%
+  arrange(desc(MOCode))
+
+# 3037 vs 3036 - intersection
+# 3028 vs 3027, 3026, 3025, 3024 - injury type
+# 3035 vs 3034 - city property involved
+# 3033 vs 3032 - private property involved
+# 3039, 3038 - DUI level
+# 3030 vs 3029 - Hit & Run
+# 4026, 4027, 4025, 4024 - region
+# 4021, 4020, 4019, 4018, 4017 ... 4001 - location
+# 3104, 3103, 3102 - PCF = Primary Collision Factor!
+
+check_multi_substring <- function(patterns, text) {
+  count <- 0
+  
+  for (pattern in unique(patterns)) {
+    count <- count + as.numeric(grepl(as.character(pattern), text))
+  }
+  
+  return(as.numeric(count > 1))
+}
+
+collisions_mo_code_conflicts <- collisions_with_labeled_intersections %>% 
+  mutate(
+    ConflictingIntersection = check_multi_substring(c(3037, 3036), MOCodes),
+    ConflictingCityProperty = check_multi_substring(c(3035, 3034), MOCodes),
+    ConflictingPrivateProperty = check_multi_substring(c(3033, 3032), MOCodes),
+    ConflictingDUI = check_multi_substring(c(3039, 3038), MOCodes),
+    ConflictingHitAndRun = check_multi_substring(c(3030, 3029), MOCodes),
+    ConflictingInjury = check_multi_substring(c(3028, 3027, 3026, 3025, 3024), MOCodes),
+    ConflictingRegion = check_multi_substring(c(4027, 4026, 4025, 4024), MOCodes),
+    ConflictingPCF = check_multi_substring(c(3104, 3103, 3102), MOCodes),
+    ConflictingLocation = check_multi_substring(c(4001:4021), MOCodes),
+    ConflictingMOCodes = ConflictingIntersection == 1 |
+      ConflictingCityProperty == 1 | ConflictingPrivateProperty == 1 |
+      ConflictingDUI == 1 | ConflictingHitAndRun == 1 | 
+      ConflictingInjury == 1 | ConflictingRegion == 1 |
+      ConflictingPCF == 1 | ConflictingLocation == 1
+  )
+
+print(
+  collisions_mo_code_conflicts %>% 
+    group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+    summarise(ConflictingCodeRate = mean(ConflictingMOCodes, na.rm=TRUE)) %>%
+    ggplot(aes(x=OccurredDate, y=ConflictingCodeRate)) +
+    geom_line() +
+    scale_y_continuous(label=scales::percent)
+)
+```
+

@@ -1,0 +1,388 @@
+---
+title: "Traffic Collisions Location Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Census data
+```{r}
+parse_census_data <- function(year) {
+  
+  census_overall <- read.csv(paste('Data/Census Data/demographics_',
+                                 year, '.csv', sep='')) %>%
+      mutate(Year = local(year),
+             Demographic = str_trim(`Label..Grouping.`),
+             Demographic = case_when(
+               Demographic %in% c('White Alone') ~ 'White',
+               Demographic %in% c('Black or African American alone') ~ 'Black',
+               Demographic %in% c('Asian alone') ~ 'Asian',
+               Demographic %in% c('Some Other Race alone') ~ 'Other',
+               Demographic %in% c('Two or More Races') ~ 'Two or More Races',
+               Demographic %in% c('Hispanic or Latino (of any race)') ~ 'Hispanic',
+               TRUE ~ Demographic),
+             DemographicType = case_when(
+               Demographic %in% c('Male', 'Female') ~ 'Sex',
+               Demographic %in% c('Under 5 years', '5 to 9 years', '10 to 14 years', 
+                                  '15 to 19 years', '20 to 24 years', '25 to 34 years', 
+                                  '35 to 44 years', '45 to 54 years', '55 to 59 years', 
+                                  '60 to 64 years', '65 to 74 years', '75 to 84 years', 
+                                  '85 years and over') ~ 'Age',
+               Demographic %in% c('White', 'Black', 'Asian', 'Other', 
+                                  'Two or More Races', 'Hispanic') ~ 'RaceEthnicity',
+               TRUE ~ NA),
+             Population = as.numeric(str_remove_all(`Los.Angeles.city..California..Estimate`, ',')),
+             TotalPopulation = ifelse(Demographic %in% c('Total population'), Population, NA)) %>%
+      group_by(Year) %>% mutate(TotalPopulation = max(TotalPopulation, na.rm=TRUE)) %>% ungroup() %>%
+      filter(!is.na(DemographicType)) %>%
+      select(Year, DemographicType, Demographic, Population, TotalPopulation)
+
+  return(census_overall)
+}
+
+census_data <- data.frame()
+
+for (year in c(2013:2024)) {census_data <- rbind(census_data, parse_census_data(year))}
+```
+
+## Age trends over time
+```{r}
+print(
+  census_data %>%
+    filter(DemographicType == 'Age') %>%
+    ggplot(aes(x=Year, y=Population, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Age Group')
+)
+
+print(
+  census_data %>%
+    filter(DemographicType == 'Age') %>%
+    mutate(Proportion = Population/Total) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Age Group') +
+    scale_y_continuous(labels=scales::percent)
+)
+```
+
+## Breakdown of collisions by race/ethnicity
+```{r, fig.height=4, fig.width=6}
+for (race in c('Asian', 'Black American', 'Hispanic/Latino', 'White')) {
+  print(
+    collisions_with_labeled_intersections %>%
+      filter(Latitude != 0, Longitude != 0, VictimEthnicity == local(race)) %>%
+      group_by(Latitude = round(Latitude, 3), Longitude = round(Longitude, 3), VictimEthnicity) %>%
+      summarise(Collisions = n()) %>%
+      arrange(Collisions) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Collisions)) +
+      geom_point() +
+      xlim(-118.7, -118.1) +
+      ylim(33.6, 34.4) +
+      facet_wrap(~VictimEthnicity)
+  )
+}
+```
+
+## Collision rates over time
+```{r}
+print(
+  census_data %>%
+    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
+    left_join(
+      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      by = c('Year' = 'OccurredYear')
+    ) %>%
+    mutate(CollisionRate = Collisions/TotalPopulation) %>%
+    ggplot(aes(x=Year, y=CollisionRate)) +
+    geom_line() +
+    scale_y_continuous(labels=scales::percent, limits=c(0, NA))
+)
+
+print(
+  census_data %>%
+    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
+    left_join(
+      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      by = c('Year' = 'OccurredYear')
+    ) %>%
+    left_join(commuting_data_overall, by='Year') %>%
+    mutate(CollisionRate = Collisions/TotalPopulation,
+           CarCommutersByPopulation = (Driving + Carpooling)/TotalPopulation
+           ) %>%
+    ggplot(aes(x=CarCommutersByPopulation, y=CollisionRate, color=as.factor(Year))) +
+    geom_point() +
+    scale_y_continuous(labels=scales::percent, limits=c(0, NA)) +
+    scale_x_continuous(labels=scales::percent) +
+    labs(x='Number of Car Commuters per Population', y='Collisions per Population', color='Year')
+)
+```
+
+# Commutes over Time
+## Loading and cleaning data
+```{r}
+pivot_commuting_overall <- function(year) {
+  commuting_overall <- read.csv(paste('Data/Commuting Data/', year, '/means_of_commuting_', 
+                               year, '.csv', sep='')) %>%
+    mutate(Year = local(year),
+           Labels = str_trim(`Label..Grouping.`),
+           Labels = case_when(
+             Labels == 'Taxi or ride-hailing services' ~ 'Taxicab', 
+             Labels == 'Public transportation (excluding taxicab):' ~ 'Public transportation:',
+             Labels == 'Worked at home' ~ 'Worked from home',
+             TRUE ~ Labels),
+           Values = as.numeric(str_remove_all(`Los.Angeles.city..California..Estimate`, ','))) %>%
+    select(Year, Labels, Values) %>%
+    filter(Labels %in% c('Total:', 'Drove alone', 'Carpooled:', 'Public transportation:', 
+                         'Walked', 'Taxicab', 'Motorcycle', 'Bicycle', 'Other means', 'Worked from home')) %>%
+    pivot_wider(names_from=Labels, values_from=Values) %>%
+    mutate(TaxiBikeAndOther = Taxicab + Motorcycle + Bicycle + `Other means`) %>% 
+    select(Year, `Total:`, `Drove alone`, `Carpooled:`, `Public transportation:`, 
+           Walked, TaxiBikeAndOther, `Worked from home`)
+  
+  colnames(commuting_overall) <- c('Year', 'TotalWorkers', 'Driving', 'Carpooling', 'PublicTransit', 
+                                   'Walking', 'TaxiBikeAndOther', 'WorkingFromHome')
+  
+  return(commuting_overall)
+}
+
+
+pivot_commuting_data_by_ethn <- function(year, file_subname, race_ethnicity_label) {
+  
+  ethn_df <- read.csv(paste('Data/Commuting Data/', year, '/means_of_commuting_', 
+                            file_subname, '_', year, '.csv', sep='')) %>% 
+    mutate(RaceEthnicity = local(race_ethnicity_label), Year = local(year),
+           Values = as.numeric(str_remove_all(`Los.Angeles.city..California..Estimate`, ','))) %>%
+    select(Year, RaceEthnicity, `Label..Grouping.`, Values) %>%
+    pivot_wider(names_from=`Label..Grouping.`, values_from=Values)
+  
+  colnames(ethn_df) <- c('Year', 'RaceEthnicity', 'TotalWorkers', 'Driving', 'Carpooling',
+                         'PublicTransit', 'Walking', 'TaxiBikeAndOther', 'WorkingFromHome')
+  
+  return(ethn_df)
+}
+
+parse_commute_data <- function(years) {
+  overall <- data.frame()
+  by_ethn <- data.frame()
+  by_lang <- data.frame()
+  
+  for (year in years) {
+    overall <- rbind(overall, pivot_commuting_overall(year))
+    by_ethn <- rbind(by_ethn, pivot_commuting_data_by_ethn(year, 'asian', 'Asian') %>%
+                       rbind(pivot_commuting_data_by_ethn(year, 'black', 'Black')) %>%
+                       rbind(pivot_commuting_data_by_ethn(year, 'hispanic', 'Hispanic')) %>%
+                       # rbind(pivot_commuting_data_by_ethn(year, 'white', 'White')) %>%
+                       rbind(pivot_commuting_data_by_ethn(year, 'white_nonhispanic', 'White')) %>%
+                       rbind(pivot_commuting_data_by_ethn(year, 'multiple_races', 'Two or More Races')) %>%
+                       rbind(pivot_commuting_data_by_ethn(year, 'other', 'Other')))
+    # by_lang <- rbind(by_lang, read.csv(paste('Data/Commuting Data/', year, '/means_of_commuting_by_language_', year, '.csv', sep='')))
+  }
+  
+  return(list(overall, by_ethn, by_lang))
+}
+
+commuting_data <- parse_commute_data(c(2013:2024))
+commuting_data_overall <- commuting_data[1] %>% as.data.frame()
+commuting_data_by_ethnicity <- commuting_data[2] %>% as.data.frame()
+```
+
+## Commuting trends over time
+```{r}
+# Proportion of each mode of transportation over time
+print(
+  commuting_data_overall %>%
+    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
+                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
+                 names_to='ModeOfTransportation', values_to='Values') %>%
+    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+
+print(
+  commuting_data_by_ethnicity %>%
+    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
+                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
+                 names_to='ModeOfTransportation', values_to='Values') %>%
+    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
+    geom_line() +
+    facet_wrap(~RaceEthnicity) +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+```
+
+## Commuting shifts after COVID
+```{r}
+commuting_by_covid_period <- commuting_data_by_ethnicity %>%
+  filter(Year >= 2016, Year != 2020) %>%
+  mutate(Period = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID') %>%
+           factor(levels = c('Pre-COVID', 'Post-COVID'))) %>%
+  group_by(Period, RaceEthnicity) %>%
+  summarise(
+    AvgWorkersPerYear = mean(TotalWorkers) %>% round(),
+    AvgCommutingByCar = mean(Driving + Carpooling) %>% round(),
+    AvgCommutingByPublicTransit = mean(PublicTransit) %>% round(),
+    AvgCommutingByWalking = mean(Walking) %>% round(),
+    AvgCommutingByTaxiBikeAndOther = mean(TaxiBikeAndOther) %>% round(),
+    AvgWorkFromHome = mean(WorkingFromHome) %>% round(),
+    
+    CommutingByCarRate = round(AvgCommutingByCar/AvgWorkersPerYear, 2),
+    CommutingByPublicTransitRate = round(AvgCommutingByPublicTransit/AvgWorkersPerYear, 2),
+    CommutingByWalkingRate = round(AvgCommutingByWalking/AvgWorkersPerYear, 2),
+    CommutingByTaxiBikeAndOtherRate = round(AvgCommutingByTaxiBikeAndOther/AvgWorkersPerYear, 2),
+    WFHRate = round(AvgWorkFromHome/AvgWorkersPerYear, 2),
+  )
+
+print(
+  commuting_by_covid_period %>%
+    ggplot(aes(x=RaceEthnicity, y=CommutingByCarRate, fill=Period)) +
+    geom_bar(stat='identity', position='dodge') +
+    scale_y_continuous(labels=scales::percent) +
+    labs(x='Race/Ethnicity', y='Commuting by Car Rate', fill='') +
+    ggtitle('Proportion of Workers Commuting by Car, Pre- and Post-COVID')
+)
+
+print(
+  commuting_by_covid_period %>%
+    ggplot(aes(x=RaceEthnicity, y=WFHRate, fill=Period)) +
+    geom_bar(stat='identity', position='dodge') +
+    scale_y_continuous(labels=scales::percent) +
+    labs(x='Race/Ethnicity', y='Working from Home Rate', fill='') +
+    ggtitle('Proportion of Workers Working from Home, Pre- and Post-COVID')
+)
+```
+
+## Comparing number of collision victims by ethnicity, compared to WFH rate
+Too correlated w/ decrease in collisions after COVID
+```{r}
+collisions_by_ethnicity <- collisions_with_labeled_intersections %>%
+  mutate(
+    VictimEthnicity = case_when(
+      VictimDescent == 'H' ~ 'Hispanic',
+      VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
+      VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
+      VictimDescent == 'B' ~ 'Black',
+      VictimDescent == 'W' ~ 'White',
+      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
+      VictimDescent == 'I' ~ 'Native American/Alaskan',
+      TRUE ~ '?'    )
+  ) %>%
+  group_by(OccurredYear, VictimEthnicity) %>%
+  summarise(Collisions = n()) %>%
+  right_join(commuting_data_by_ethnicity, 
+             by=c('VictimEthnicity'='RaceEthnicity', 'OccurredYear'='Year')) %>%
+  right_join(census_data %>% filter(DemographicType == 'RaceEthnicity'),
+             by=c('VictimEthnicity'='Demographic', 'OccurredYear'='Year')) %>%
+  mutate(
+    Car = Driving + Carpooling,
+    DrivingProportion = Car/TotalWorkers,
+    WalkingProportion = Walking/TotalWorkers,
+    PublicTransitProportion = PublicTransit/TotalWorkers,
+    WFHProportion = WorkingFromHome/TotalWorkers,
+    CollisionRate = Collisions/Population)
+```
+
+```{r}
+print(
+  collisions_by_ethnicity %>% 
+    filter(VictimEthnicity != 'Other', 
+           VictimEthnicity != 'Two or More Races',
+           OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
+    ggplot(aes(x=DrivingProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
+    geom_point(size=3) +
+    scale_x_continuous(labels=scales::percent) +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Proportion of Workers Driving to Work vs Collision Rate of Population', 
+            subtitle='By Ethnicity')
+)
+
+print(
+  collisions_by_ethnicity %>% 
+    filter(VictimEthnicity != 'Other', 
+           VictimEthnicity != 'Two or More Races',
+           OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
+    ggplot(aes(x=WFHProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
+    geom_point(size=3) +
+    scale_x_continuous(labels=scales::percent) +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Proportion of Workers Working from Home vs Collision Rate of Population', 
+            subtitle='By Ethnicity')
+)
+```
+
+## Distributions of collision time over the years
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(!is.na(OccurredTime), OccurredYear >= 2016, 
+           OccurredYear < 2025, OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID'),) %>%
+    group_by(Period) %>% mutate(Total = n()) %>% ungroup() %>%
+    group_by(OccurredTime = round(OccurredTime, -2), Period) %>%
+    summarise(Distribution = n()/first(Total)) %>%
+    ggplot(aes(x=OccurredTime, y=Distribution, color=Period)) +
+    geom_line() +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collision Occurrence Time, Pre- and Post-COVID')
+)
+```
+
+# Parsing ZIP Codes
+```{r}
+zip_code_boundaries <- read_json('Data/ZIP Codes/Zipcodes.geojson')
+
+# zip_codes_df <- read.csv('Cleaned Data/LAZipCodes.csv') %>%
+#   filter(ObjectID < 285)
+# 
+# for (i in range(280:length(zip_code_boundaries$features))) {
+#   row <- zip_code_boundaries$features[[i]]
+#   
+#   object_id <- row$properties$OBJECTID
+#   zip_code <- row$properties$ZIPCODE
+#   shape_type <- row$geometry$type
+#   
+#   if (shape_type == 'Polygon') {
+#     coordinates <- row$geometry$coordinates[[1]]
+#   } else {
+#     coordinates <- row$geometry$coordinates[[1]][[1]]
+#   }
+#   for (coord_set in coordinates) {
+#     zip_codes_df <- rbind(zip_codes_df,
+#                           list('ObjectID'=object_id, 'ZIPCode'=zip_code,
+#                                'Longitude'=coord_set[[1]],
+#                                'Latitude'=coord_set[[2]]))
+#   }
+# }
+# 
+# zip_codes_df <- zip_codes_df %>% distinct() 
+# zip_codes_df %>% write.csv('Cleaned Data/LAZipCodes.csv', row.names=FALSE)
+```
+
+```{r}
+
+```
