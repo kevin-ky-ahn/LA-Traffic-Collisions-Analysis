@@ -1,0 +1,186 @@
+---
+title: "COVID Cases Forecasting"
+output: html_document
+date: "2026-01-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+```
+
+# Load Data
+## Collisions
+```{r cars}
+collisions_df <- read.csv('Data/Traffic_Collision_Data_from_2010_to_Present.csv')
+tail(collisions_df)
+```
+
+#### Clean up the columns
+```{r}
+collisions_cleaned <- collisions_df %>%
+  rename(DRKey = `DR.Number`,
+         ReportedDate = `Date.Reported`,
+         OccurredDate = `Date.Occurred`,
+         OccurredTime = `Time.Occurred`,
+         AreaKey = `Area.ID`,
+         AreaName = `Area.Name`,
+         ReportingDistrict = `Reporting.District`,
+         CrimeCode = `Crime.Code`,
+         CrimeCodeDescription = `Crime.Code.Description`,
+         MOCodes = `MO.Codes`,
+         VictimAge = `Victim.Age`,
+         VictimSex = `Victim.Sex`,
+         VictimDescent = `Victim.Descent`,
+         PremiseCode = `Premise.Code`,
+         PremiseDescription = `Premise.Description`,
+         CrossStreet = `Cross.Street`
+         ) %>%
+  mutate(
+    ReportedDate = as.Date(ReportedDate, format='%m/%d/%Y'),
+    OccurredDate = as.Date(OccurredDate, format='%m/%d/%Y')
+  ) %>% rowwise() %>% mutate(
+    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[1]]),
+    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[2]]),
+  ) %>% select(-Location)
+
+```
+
+## LADOT Parking Inventory
+```{r cars}
+ladot_parking_df <- read.csv('Data/LADOT_Metered_Parking_Inventory___Policies.csv')
+tail(ladot_parking_df)
+```
+
+#### Clean up the columns
+```{r}
+ladot_parking_cleaned <- ladot_parking_df %>% mutate(
+    RateMin = as.numeric(str_split(gsub('\\$', '', RateRange), ' - ')[[1]][[1]]),
+    RateMax = as.numeric(tail(str_split(gsub('\\$', '', RateRange), ' - ')[[1]], n=1)),
+    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', LatLng)), ',')[[1]][[1]]),
+    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', LatLng)), ',')[[1]][[2]]),
+  ) %>% select(
+    -RateRange, -LatLng
+  )
+```
+
+## LADOT Traffic
+```{r cars}
+ladot_traffic_df <- read.csv('Data/LADOT_Traffic_Counts_Summary.csv')
+tail(ladot_traffic_df)
+```
+
+#### Clean up the columns
+```{r}
+ladot_traffic_cleaned <- ladot_traffic_df %>% rename(
+  PrimaryStreet = `Primary.Street`,
+  Direction = Dir,
+  CrossStreet = `Cross.Street`,
+  District = Dist,
+  CountDate = `Count.Date`,
+  DayOfWeek = Day,
+  WestBoundTraffic = `W.B`,
+  EastBoundTraffic = `E.B`,
+  NorthBoundTraffic = `N.B`,
+  SouthBoundTraffic = `S.B`,
+  TotalTraffic = Total
+) %>% mutate(
+  PrimaryStreet = gsub(' st ', 'st ', PrimaryStreet),
+  PrimaryStreet = gsub(' nd ', 'nd ', PrimaryStreet),
+  PrimaryStreet = gsub(' rd ', 'rd ', PrimaryStreet),
+  PrimaryStreet = gsub(' th ', 'th ', PrimaryStreet),
+  CountDate = as.Date(CountDate, format='%B %d %Y')
+)
+
+```
+
+## LAX Flights by Month
+```{r cars}
+lax_flights_df <- read.csv('Data/Los_Angeles_International_Airport_-_Flight_Operations_By_Month.csv')
+tail(lax_flights_df)
+```
+
+#### Clean up the columns
+```{r}
+lax_flights_cleaned <- lax_flights_df %>% rename(
+  ReportDate = `ReportPeriod`,
+  ArrivalOrDeparture = Arrival_Departure,
+  DomesticOrInternational = Domestic_International,
+) %>% mutate(
+  DataExtractDate = as_datetime(DataExtractDate, format='%m/%d/%Y %I:%M:%S %p'),
+  ReportDate = as.Date(ReportDate, format='%m/%d/%Y %I:%M:%S %p')
+)
+```
+
+## LAX Passengers by Terminal
+```{r cars}
+lax_passengers_df <- read.csv('Data/Los_Angeles_International_Airport_-_Passenger_Traffic_By_Terminal.csv')
+tail(lax_passengers_df)
+```
+
+#### Clean up the columns
+```{r}
+lax_passengers_cleaned <- lax_passengers_df %>% rename(
+  ReportDate = `ReportPeriod`,
+  ArrivalOrDeparture = Arrival_Departure,
+  DomesticOrInternational = Domestic_International,
+  PassengerCount = Passenger_Count,
+) %>% mutate(
+  DataExtractDate = as_datetime(DataExtractDate, format='%m/%d/%Y %I:%M:%S %p'),
+  ReportDate = as.Date(ReportDate, format='%m/%d/%Y %I:%M:%S %p')
+)
+```
+
+## Metro Bike Share Trips
+```{r cars}
+bike_share_trips_df <- read.csv('Data/Metro_Bike_Share_Trip_Data.csv')
+tail(bike_share_trips_df)
+```
+
+
+#### Clean up the columns
+```{r}
+bike_share_trips_cleaned <- bike_share_trips_df %>% rename(
+  TripKey = `Trip.ID`,
+  TripDuration = Duration,
+  TripStartTime = `Start.Time`,
+  TripEndTime = `End.Time`,
+  StartingStationKey = `Starting.Station.ID`,
+  StartingStationLatitude = `Starting.Station.Latitude`,
+  StartingStationLongitude = `Starting.Station.Longitude`,
+  EndingStationKey = `Ending.Station.ID`,
+  EndingStationLatitude = `Ending.Station.Latitude`,
+  BikeKey = `Bike.ID`,
+  PlanDuration = `Plan.Duration`,
+  TripRouteCategory = `Trip.Route.Category`,
+  PassholderType = `Passholder.Type`,
+) %>% mutate(
+  TripStartTime = as_datetime(TripStartTime, format='%m/%d/%Y %I:%M:%S %p'),
+  TripEndTime = as_datetime(TripEndTime, format='%m/%d/%Y %I:%M:%S %p')
+) %>% rowwise() %>% mutate(
+  StartingLatitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', `Starting.Lat.Long`)), ', ')[[1]][[1]]),
+  StartingLongitude = as.numeric(tail(str_split(gsub('\\)', '', gsub('\\(', '', `Starting.Lat.Long`)), ',')[[1]], n=1)),
+  EndingLatitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', `Ending.Lat.Long`)), ',')[[1]][[1]]),
+  EndingLongitude = as.numeric(tail(str_split(gsub('\\)', '', gsub('\\(', '', `Ending.Lat.Long`)), ',')[[1]], n=1)),
+) %>% select(
+  -`Starting.Lat.Long`, -`Ending.Lat.Long`
+)
+```
+
+# Export Data
+```{r}
+# collisions_cleaned %>% write.csv('Cleaned Data/LATrafficCollisions.csv', row.names = FALSE)
+# ladot_parking_cleaned %>% write.csv('Cleaned Data/LADOTParkingInventory.csv', row.names = FALSE)
+# ladot_traffic_cleaned %>% write.csv('Cleaned Data/LADOTTrafficCounts.csv', row.names = FALSE)
+# lax_passengers_cleaned %>% write.csv('Cleaned Data/LAXPassengersByTerminal.csv', row.names = FALSE)
+# lax_flights_cleaned %>% write.csv('Cleaned Data/LAXFlightsByMonth.csv', row.names = FALSE)
+# bike_share_trips_cleaned %>% write.csv('Cleaned Data/LAMetroBikeShareTrips.csv', row.names = FALSE)
+```
+
+
