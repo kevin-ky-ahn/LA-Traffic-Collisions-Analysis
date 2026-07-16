@@ -13,6 +13,8 @@ library(lubridate)
 library(ggplot2)
 library(jsonlite)
 library(readxl)
+library(forecast)
+library(tseries)
 ```
 
 # Load Data
@@ -52,135 +54,850 @@ collisions_cleaned <- collisions_df %>%
 
 ```
 
-## LADOT Parking Inventory
-```{r cars}
-ladot_parking_df <- read.csv('Data/LADOT_Metered_Parking_Inventory___Policies.csv')
-tail(ladot_parking_df)
-```
-
-#### Clean up the columns
-```{r}
-ladot_parking_cleaned <- ladot_parking_df %>% mutate(
-    RateMin = as.numeric(str_split(gsub('\\$', '', RateRange), ' - ')[[1]][[1]]),
-    RateMax = as.numeric(tail(str_split(gsub('\\$', '', RateRange), ' - ')[[1]], n=1)),
-    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', LatLng)), ',')[[1]][[1]]),
-    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', LatLng)), ',')[[1]][[2]]),
-  ) %>% select(
-    -RateRange, -LatLng
-  )
-```
-
-## LADOT Traffic
-```{r cars}
-ladot_traffic_df <- read.csv('Data/LADOT_Traffic_Counts_Summary.csv')
-tail(ladot_traffic_df)
-```
-
-#### Clean up the columns
-```{r}
-ladot_traffic_cleaned <- ladot_traffic_df %>% rename(
-  PrimaryStreet = `Primary.Street`,
-  Direction = Dir,
-  CrossStreet = `Cross.Street`,
-  District = Dist,
-  CountDate = `Count.Date`,
-  DayOfWeek = Day,
-  WestBoundTraffic = `W.B`,
-  EastBoundTraffic = `E.B`,
-  NorthBoundTraffic = `N.B`,
-  SouthBoundTraffic = `S.B`,
-  TotalTraffic = Total
-) %>% mutate(
-  PrimaryStreet = gsub(' st ', 'st ', PrimaryStreet),
-  PrimaryStreet = gsub(' nd ', 'nd ', PrimaryStreet),
-  PrimaryStreet = gsub(' rd ', 'rd ', PrimaryStreet),
-  PrimaryStreet = gsub(' th ', 'th ', PrimaryStreet),
-  CountDate = as.Date(CountDate, format='%B %d %Y')
-)
-
-```
-
-## LAX Flights by Month
-```{r cars}
-lax_flights_df <- read.csv('Data/Los_Angeles_International_Airport_-_Flight_Operations_By_Month.csv')
-tail(lax_flights_df)
-```
-
-#### Clean up the columns
-```{r}
-lax_flights_cleaned <- lax_flights_df %>% rename(
-  ReportDate = `ReportPeriod`,
-  ArrivalOrDeparture = Arrival_Departure,
-  DomesticOrInternational = Domestic_International,
-) %>% mutate(
-  DataExtractDate = as_datetime(DataExtractDate, format='%m/%d/%Y %I:%M:%S %p'),
-  ReportDate = as.Date(ReportDate, format='%m/%d/%Y %I:%M:%S %p')
-)
-```
-
-## LAX Passengers by Terminal
-```{r cars}
-lax_passengers_df <- read.csv('Data/Los_Angeles_International_Airport_-_Passenger_Traffic_By_Terminal.csv')
-tail(lax_passengers_df)
-```
-
-#### Clean up the columns
-```{r}
-lax_passengers_cleaned <- lax_passengers_df %>% rename(
-  ReportDate = `ReportPeriod`,
-  ArrivalOrDeparture = Arrival_Departure,
-  DomesticOrInternational = Domestic_International,
-  PassengerCount = Passenger_Count,
-) %>% mutate(
-  DataExtractDate = as_datetime(DataExtractDate, format='%m/%d/%Y %I:%M:%S %p'),
-  ReportDate = as.Date(ReportDate, format='%m/%d/%Y %I:%M:%S %p')
-)
-```
-
-## Metro Bike Share Trips
-```{r cars}
-bike_share_trips_df <- read.csv('Data/Metro_Bike_Share_Trip_Data.csv')
-tail(bike_share_trips_df)
-```
-
-
-#### Clean up the columns
-```{r}
-bike_share_trips_cleaned <- bike_share_trips_df %>% rename(
-  TripKey = `Trip.ID`,
-  TripDuration = Duration,
-  TripStartTime = `Start.Time`,
-  TripEndTime = `End.Time`,
-  StartingStationKey = `Starting.Station.ID`,
-  StartingStationLatitude = `Starting.Station.Latitude`,
-  StartingStationLongitude = `Starting.Station.Longitude`,
-  EndingStationKey = `Ending.Station.ID`,
-  EndingStationLatitude = `Ending.Station.Latitude`,
-  BikeKey = `Bike.ID`,
-  PlanDuration = `Plan.Duration`,
-  TripRouteCategory = `Trip.Route.Category`,
-  PassholderType = `Passholder.Type`,
-) %>% mutate(
-  TripStartTime = as_datetime(TripStartTime, format='%m/%d/%Y %I:%M:%S %p'),
-  TripEndTime = as_datetime(TripEndTime, format='%m/%d/%Y %I:%M:%S %p')
-) %>% rowwise() %>% mutate(
-  StartingLatitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', `Starting.Lat.Long`)), ', ')[[1]][[1]]),
-  StartingLongitude = as.numeric(tail(str_split(gsub('\\)', '', gsub('\\(', '', `Starting.Lat.Long`)), ',')[[1]], n=1)),
-  EndingLatitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', `Ending.Lat.Long`)), ',')[[1]][[1]]),
-  EndingLongitude = as.numeric(tail(str_split(gsub('\\)', '', gsub('\\(', '', `Ending.Lat.Long`)), ',')[[1]], n=1)),
-) %>% select(
-  -`Starting.Lat.Long`, -`Ending.Lat.Long`
-)
-```
-
-# Export Data
 ```{r}
 # collisions_cleaned %>% write.csv('Cleaned Data/LATrafficCollisions.csv', row.names = FALSE)
-# ladot_parking_cleaned %>% write.csv('Cleaned Data/LADOTParkingInventory.csv', row.names = FALSE)
-# ladot_traffic_cleaned %>% write.csv('Cleaned Data/LADOTTrafficCounts.csv', row.names = FALSE)
-# lax_passengers_cleaned %>% write.csv('Cleaned Data/LAXPassengersByTerminal.csv', row.names = FALSE)
-# lax_flights_cleaned %>% write.csv('Cleaned Data/LAXFlightsByMonth.csv', row.names = FALSE)
-# bike_share_trips_cleaned %>% write.csv('Cleaned Data/LAMetroBikeShareTrips.csv', row.names = FALSE)
 ```
 
+
+# Load and Clean Data
+```{r}
+collisions_df <- read.csv('Data/Traffic_Collision_Data_from_2010_to_Present.csv')
+
+collisions_cleaned <- collisions_df %>%
+  rename(DRKey = `DR.Number`,
+         ReportedDate = `Date.Reported`,
+         OccurredDate = `Date.Occurred`,
+         OccurredTime = `Time.Occurred`,
+         AreaKey = `Area.ID`,
+         AreaName = `Area.Name`,
+         ReportingDistrict = `Reporting.District`,
+         CrimeCode = `Crime.Code`,
+         CrimeCodeDescription = `Crime.Code.Description`,
+         MOCodes = `MO.Codes`,
+         VictimAge = `Victim.Age`,
+         VictimSex = `Victim.Sex`,
+         VictimDescent = `Victim.Descent`,
+         PremiseCode = `Premise.Code`,
+         PremiseDescription = `Premise.Description`,
+         CrossStreet = `Cross.Street`
+         ) %>%
+  mutate(
+    ReportedDate = as.Date(ReportedDate, format='%m/%d/%Y'),
+    OccurredDate = as.Date(OccurredDate, format='%m/%d/%Y'),
+    Address = str_squish(Address),
+    CrossStreet = str_squish(CrossStreet),
+    AreaName = str_squish(AreaName),
+    CrimeCodeDescription = str_squish(CrimeCodeDescription),
+    MOCodes = str_squish(MOCodes)
+  ) %>% rowwise() %>% mutate(
+    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[1]]),
+    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[2]]),
+  ) %>% select(-Location)
+```
+
+```{r}
+collisions_cleaned
+```
+
+# Breakdown of Fields
+## Categorical Fields
+Histograms of OccurredTime, AreaKey/AreaName, ReportingDistrict, CrimeCode/CrimeCodeDescription, VictimAge, VictimSex, VictimDescent, PremiseCode/PremiseDescription, Address, CrossStreet; need to make sure I'm correctly tracking what is or isn't a collision
+```{r, fig.height=5, fig.width=7}
+for (col in c('OccurredTime', 'AreaKey', 'VictimAge')) {
+  print(
+    collisions_cleaned %>% rename(TargetFeature = as.symbol(col)) %>%
+      ggplot(aes(x=TargetFeature)) +
+      geom_histogram() +
+      ggtitle(paste0(col, ' Distribution'))
+  )
+}
+
+for (col in c('AreaName', 'VictimSex', 'VictimDescent')) {
+  print(
+    collisions_cleaned %>% rename(TargetFeature = as.symbol(col)) %>%
+      ggplot(aes(x=TargetFeature)) +
+      geom_histogram(stat='count') +
+      theme(axis.text.x = element_text(angle = 80, vjust = 0.5, hjust=1)) +
+      ggtitle(paste0(col, ' Distribution'))
+  )
+}
+
+# CrimeCode and CrimeCodeDescription are all the same - Traffic Collision
+
+# No clear concentration of collisions
+print(collisions_cleaned %>% group_by(ReportingDistrict) %>%
+     summarise(Count = n()) %>% arrange(desc(Count)))
+
+# Most common by far is STREET (101)
+print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
+     summarise(Count = n()) %>% arrange(desc(Count)))
+
+# Each PremiseCode only has one PremiseDescription
+print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
+     summarise(Count = n()) %>% ungroup() %>% group_by(PremiseCode) %>% 
+       summarise(Count=n()) %>% arrange(desc(Count)))
+
+# PremiseDecription for 418 is empty, which comes up once; should replace with NA or vice versa
+# Otherwise, each PremiseDescription only has one PremiseCode
+print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
+     summarise(Count = n()) %>% ungroup() %>% group_by(PremiseDescription) %>% 
+       summarise(Count=n()) %>% arrange(desc(Count)))
+print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
+     summarise(Count = n()) %>% filter(PremiseDescription == ''))
+
+# No clear concentration of collisions
+print(collisions_cleaned %>% group_by(Address, CrossStreet) %>%
+     summarise(Count = n()) %>% arrange(desc(Count)))
+
+```
+
+## Time series graphs
+```{r}
+collisions_by_reported <- collisions_cleaned %>% 
+  group_by(ReportedDate) %>% summarise(Collisions = n())
+collisions_by_occurred <- collisions_cleaned %>% 
+  group_by(OccurredDate) %>% summarise(Collisions = n())
+
+collisions_by_reported_by_week <- collisions_cleaned %>% 
+  group_by(ReportedDate = floor_date(ReportedDate, unit='weeks')) %>% 
+  summarise(Collisions = n())
+collisions_by_occurred_by_week <- collisions_cleaned %>% 
+  group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
+  summarise(Collisions = n())
+
+print(collisions_by_reported %>%ggplot(aes(x=ReportedDate, y=Collisions)) +
+    geom_line() + ggtitle('Collisions by Reported Date'))
+print(collisions_by_occurred %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
+    geom_line() + ggtitle('Collisions by Occurred Date'))
+
+print(collisions_by_reported_by_week %>%ggplot(aes(x=ReportedDate, y=Collisions)) +
+    geom_line() + ggtitle('Collisions by Week of Reported Date'))
+print(collisions_by_occurred_by_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
+    geom_line() + ggtitle('Collisions by Week of Occurred Date'))
+```
+
+### Looking at it by week and by area
+```{r}
+collisions_by_week <- collisions_cleaned %>% 
+  group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
+  summarise(Collisions = n())
+
+collisions_by_area_and_week <- collisions_cleaned %>% 
+  group_by(AreaName, OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
+  summarise(Collisions = n())
+
+print(collisions_by_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
+    geom_line() + ggtitle('Collisions by Week of Occurred Date'))
+```
+
+```{r, fig.width=10, fig.height=8}
+print(collisions_by_area_and_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
+        facet_wrap(~AreaName) + geom_line() +
+        ggtitle('Collisions by Area and Week of Occurred Date'))
+```
+### Mean and median occurred time over time
+```{r}
+occurred_time_stats_over_time <- collisions_cleaned %>%
+  group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>% 
+  summarise(
+    MeanOccurredTime = mean(OccurredTime, na.rm=TRUE),
+    MedianOccurredTime = median(OccurredTime, na.rm=TRUE)
+  )
+print(occurred_time_stats_over_time %>% ggplot(aes(x=OccurredDate, y=MeanOccurredTime)) +
+    geom_line() + ggtitle('Mean Collision Time by Week of Occurred Date'))
+
+print(occurred_time_stats_over_time %>% ggplot(aes(x=OccurredDate, y=MedianOccurredTime)) +
+    geom_line() + ggtitle('Median Collision Time by Week of Occurred Date'))
+```
+### Occurred time distribution
+```{r}
+occurred_time_dist_over_time <- collisions_cleaned %>% 
+  mutate(
+    Last2Digits = OccurredTime - floor(OccurredTime/100)*100,
+    RoundedOccurredTime = case_when(
+      Last2Digits >= 45 ~ floor(OccurredTime/100)*100 + 100,
+      Last2Digits >= 15 ~ floor(OccurredTime/100)*100 + 30,
+      TRUE ~ floor(OccurredTime/100)*100
+    ),
+    RoundedOccurredTime = ifelse(RoundedOccurredTime >= 2400, 
+                                 RoundedOccurredTime-2400, RoundedOccurredTime)
+    ) %>% 
+  group_by(Year = year(OccurredDate), RoundedOccurredTime) %>%
+  summarise(Collisions = n())
+
+print(
+  occurred_time_dist_over_time %>%
+    ggplot(aes(x=RoundedOccurredTime, y=Collisions)) +
+    geom_bar(stat='identity', width=50) +
+    facet_wrap(~Year) +
+    ggtitle('Distribution of Collision Occurrence Time by Year')
+)
+```
+
+```{r}
+collisions_by_coordinates_and_year %>% 
+  filter(OccurredYear == local(year),
+         Latitude <= local(34.4),
+         Latitude >= local(33.6),
+         Longitude <= local(-118.125),
+         Longitude >= local(-118.75),
+         )
+```
+
+## Scatterplot of Latitude, Longitude, 
+```{r, fig.width=6, fig.height=3.5}
+rounding_factor <- 100
+
+collisions_by_coordinates_and_year <- collisions_cleaned %>% 
+  group_by(Address, CrossStreet, Latitude, Longitude, OccurredYear = year(OccurredDate)) %>% 
+  summarise(Collisions = n()) %>% 
+  group_by(Latitude = floor(Latitude*local(rounding_factor))/local(rounding_factor), 
+           Longitude = floor(Longitude*local(rounding_factor))/local(rounding_factor),
+           OccurredYear) %>% 
+  summarise(TotalCollisions = sum(Collisions),
+            AvgCollisionsPerLocation = mean(Collisions, na.rm=TRUE),
+            NumCollisionRecords = n()) %>%
+  filter(Latitude != 0 | Longitude != 0)
+
+for (year in c(2011:2025)) {
+  print(
+    collisions_by_coordinates_and_year %>%
+      arrange(TotalCollisions) %>% 
+      filter(OccurredYear == local(year),
+             Latitude <= local(34.4),
+             Latitude >= local(33.6),
+             Longitude <= local(-118.125),
+             Longitude >= local(-118.75),
+             ) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
+      geom_point(size=2) +
+      ggtitle(paste0('Total Collisions by Coordinates in ', year, sep=''))
+  )
+}
+```
+
+```{r, fig.width=6, fig.height=3.5}
+for (year in c(2011:2025)) {
+  print(
+    collisions_by_coordinates_and_year %>%
+      arrange(AvgCollisionsPerLocation) %>%
+      filter(OccurredYear == local(year),
+             Latitude <= local(34.4),
+             Latitude >= local(33.6),
+             Longitude <= local(-118.125),
+             Longitude >= local(-118.75),
+             ) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=AvgCollisionsPerLocation)) +
+      geom_point(size=2) +
+      ggtitle(paste0('Avg Collisions Per Location by Coordinates in ', year, sep=''))
+  )
+}
+```
+
+# Forecasting Overall Collision Counts
+## Pre-COVID
+```{r}
+collisions_over_time_pre_covid <- collisions_cleaned %>% 
+  filter(OccurredDate < as.Date('2020-03-15')) %>%
+  group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>%
+  summarise(Collisions = n())
+
+start_time <- c(year(min(collisions_over_time_pre_covid$OccurredDate)), 
+                month(min(collisions_over_time_pre_covid$OccurredDate)))
+
+collisions_pre_covid_ts <- ts(collisions_over_time_pre_covid$Collisions, 
+                    start = start_time, frequency = 52)
+
+train <- head(collisions_pre_covid_ts, round(length(collisions_pre_covid_ts) * 0.8))
+h <- length(collisions_pre_covid_ts) - length(train)
+test <- tail(collisions_pre_covid_ts, h)
+```
+
+
+```{r}
+collisions_pre_covid_auto_model <- auto.arima(train)
+collisions_pre_covid_auto_model
+```
+
+### Differencing
+```{r}
+train %>% adf.test()
+train %>% ggtsdisplay(main='')
+
+train_dff1 <- train %>% diff()
+train_dff1 %>% adf.test()
+train_dff1 %>% ggtsdisplay(main='')
+```
+
+### AR
+```{r}
+pacf(train_dff1) # 3-4
+```
+### MA
+```{r}
+acf(train_dff1) #2
+```
+### ARIMA
+```{r}
+collisions_pre_covid_model <- Arima(train, order=c(3, 1, 2))
+collisions_pre_covid_model
+```
+
+### Comparing AIC
+```{r}
+exp((collisions_pre_covid_auto_model$aic - collisions_pre_covid_model$aic)/2)
+```
+### Forecast
+```{r}
+forecast_1 <- forecast(collisions_pre_covid_auto_model, h=length(test))
+forecast_2 <- forecast(collisions_pre_covid_model, h=length(test))
+
+autoplot(collisions_pre_covid_ts)
+autoplot(forecast_1)
+autoplot(forecast_2)
+```
+
+## Post-COVID
+```{r}
+collisions_over_time_post_covid <- collisions_cleaned %>% 
+  filter(OccurredDate >= as.Date('2021-01-03')) %>%
+  group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>%
+  summarise(Collisions = n())
+
+start_time <- c(year(min(collisions_over_time_post_covid$OccurredDate)), 
+                month(min(collisions_over_time_post_covid$OccurredDate)))
+
+collisions_post_covid_ts <- ts(collisions_over_time_post_covid$Collisions, 
+                    start = start_time, frequency = 52)
+
+train <- head(collisions_post_covid_ts, round(length(collisions_post_covid_ts) * 0.8))
+h <- length(collisions_post_covid_ts) - length(train)
+test <- tail(collisions_post_covid_ts, h)
+```
+
+
+```{r}
+collisions_post_covid_auto_model <- auto.arima(train)
+collisions_post_covid_auto_model
+```
+
+### Differencing
+```{r}
+train %>% adf.test()
+train %>% ggtsdisplay(main='')
+
+train_dff1 <- train %>% diff()
+train_dff1 %>% adf.test()
+train_dff1 %>% ggtsdisplay(main='')
+```
+
+### AR
+```{r}
+pacf(train) # 1-2
+```
+### MA
+```{r}
+acf(train) #3
+```
+### ARIMA
+```{r}
+collisions_post_covid_model <- Arima(train, order=c(1, 0, 3))
+collisions_post_covid_model
+```
+
+### Comparing AIC
+```{r}
+exp((collisions_post_covid_auto_model$aic - collisions_post_covid_model$aic)/2)
+```
+### Forecast
+```{r}
+forecast_1 <- forecast(collisions_post_covid_auto_model, h=length(test))
+forecast_2 <- forecast(collisions_post_covid_model, h=length(test))
+
+autoplot(collisions_post_covid_ts)
+autoplot(forecast_1)
+autoplot(forecast_2)
+```
+
+
+
+
+
+
+# Identifying Collision Hot Spots
+```{r}
+rounding_factor <- 100
+
+collisions_by_location_2024 <- collisions_cleaned %>%
+  mutate(OccurredYear = year(OccurredDate)) %>%
+  filter(OccurredYear == 2024) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude) %>% 
+  summarise(Collisions = n()) %>% 
+  group_by(Latitude = round(Latitude*local(rounding_factor))/local(rounding_factor), 
+           Longitude = round(Longitude*local(rounding_factor))/local(rounding_factor)) %>% 
+  summarise(TotalCollisions = sum(Collisions),
+            AvgCollisionsPerLocation = mean(Collisions, na.rm=TRUE),
+            NumCollisionRecords = n(),
+            RangeOfCollisions = max(Collisions) - min(Collisions),
+            StdCollisions = sd(Collisions)
+            ) %>%
+  filter(Latitude != 0 | Longitude != 0)
+```
+## Check the spread of collision statistics
+```{r}
+print(
+  collisions_by_location_2024 %>%
+    ggplot(aes(x=NumCollisionRecords)) +
+    geom_histogram()
+)
+```
+
+```{r}
+print(
+  collisions_by_location_2024 %>% 
+    ggplot(aes(x=RangeOfCollisions, y=StdCollisions, size=NumCollisionRecords)) +
+    geom_point()
+)
+```
+
+
+```{r}
+collisions_by_location_2024 %>% arrange(desc(RangeOfCollisions))
+```
+
+```{r}
+collisions_by_location_2024 %>% arrange(desc(StdCollisions))
+```
+
+```{r}
+collisions_cleaned %>%
+  mutate(OccurredYear = year(OccurredDate),
+         RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+         RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor),
+         ) %>%
+  filter(
+    OccurredYear == 2024,
+    (RoundedLat == 33.99 & RoundedLon == -118.28) |
+    (RoundedLat == 34.22 & RoundedLon == -118.45) |
+    (RoundedLat == 34.03 & RoundedLon == -118.52) |
+    (RoundedLat == 34.04 & RoundedLon == -118.56) 
+  ) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude, RoundedLat, RoundedLon) %>% 
+  summarise(Collisions = n()) %>% arrange(desc(RoundedLat), desc(RoundedLon))
+```
+### Checking for intersections with multiple sets of coordinates, which I should've done before
+```{r}
+collisions_cleaned %>% 
+  filter(Latitude != 0 | Longitude != 0) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude) %>% 
+  summarise(Collisions = n()) %>% 
+  group_by(Address, CrossStreet) %>% 
+  summarise(
+    NumCoordinates = n(),
+    MaxLat = max(Latitude),
+    MinLat = min(Latitude),
+    MaxLon = max(Longitude),
+    MinLon = min(Longitude),
+    LatRange = MaxLat - MinLat,
+    LonRange = MaxLon - MinLon,
+    LatStd = sd(Latitude),
+    LonStd = sd(Longitude),
+    AvgLat = mean(Latitude),
+    AvgLon = mean(Longitude),
+    ModeLat = mode(Latitude),
+    ModeLon = mode(Longitude)
+  ) %>%
+  arrange(desc(NumCoordinates))
+```
+```{r}
+print(collisions_cleaned %>% filter(Address == 'PACIFIC COAST HY', CrossStreet == 'FIGUEROA ST') %>%
+        select(Address, CrossStreet, Latitude, Longitude, PremiseDescription) %>%
+        group_by(Latitude, Longitude) %>% summarise(Count = n()) %>%
+        ggplot(aes(x=Longitude, y=Latitude, size=Count)) +
+        geom_point())
+```
+
+```{r}
+collisions_cleaned %>% filter(Latitude == 33.9892, Longitude ==	-118.2827)
+```
+
+```{r}
+collision_mo_codes <- collisions_cleaned %>% 
+  mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
+  separate_rows(MOCode, convert=TRUE)
+```
+
+## Classifying the MO Codes, based on the PDF I found
+```{r}
+mo_code_descriptions <- read.csv('Data/MOCodes.csv') %>% 
+  mutate(Description = substring(MOCode, 6),
+         MOCode = as.numeric(substring(MOCode, 1, 4)))
+
+mo_code_descriptions %>% write.csv('Cleaned Data/MOCodeDescriptions.csv', row.names=FALSE)
+
+collision_mo_codes %>% 
+  filter(!is.na(MOCode)) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+# Select the MOCodes of interest
+collision_mo_codes %>% 
+  filter(MOCode %in% c(3004, 3006, 3011, 3003, 3008, 3012,
+                       3037, 3036, 3030, 3029, 3028, 3026, 3025, 3035, 3034, 3602, 3039, 3027, 3038, 1218
+                       )) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+# 3004, 3006, 3011, 3003, 3008, 3012
+# 3037 vs 3036, 3030/3029, 3028 vs 3026/3025, 3035 vs 3034, 3602, 3039, 3027, 3038, 1218
+```
+
+```{r}
+collision_mo_codes %>% 
+  filter(MOCode %in% c(0947, 3025,			
+3101, 3401, 3701, 3006, 3030, 3032,			
+0605, 3101, 3401, 3701, 3011, 3030, 3036,		
+0605, 3101, 3401, 3701, 3006, 3030,			
+3101, 3401, 3701, 3006, 3034, 3032,			
+3101, 3401, 3701, 3006, 3030, 0605,			
+3028, 4011, 3030, 3034, 0605, 3101, 3401, 3701, 3011, 3104)) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+collisions_with_mo_labels %>% 
+  filter(CrossStreet == '') %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(AtIntersection = max(AtIntersection),
+            PrivatePropertyInvolved = max(PrivatePropertyInvolved)) %>%
+  filter(AtIntersection == 1, PrivatePropertyInvolved == 1) %>%
+  select(Latitude, Longitude)
+
+collisions_with_mo_labels %>%
+  filter(Latitude == 34.1367	, Longitude == -118.2713) %>%
+  select(AtIntersection, PrivatePropertyInvolved, CrossStreet)
+```
+
+```{r}
+# checking for MO Code overlap
+## at intersection y/n - rare overlap seems to be more at intersections
+collisions_cleaned %>% filter(grepl('3037', MOCodes), grepl('3036', MOCodes))
+
+## collision w/; rare overlap, should probably classify as multiple and also make individual columns
+collisions_cleaned %>% filter(grepl('3004', MOCodes) + grepl('3006', MOCodes) + grepl('3011', MOCodes) + 
+                              grepl('3003', MOCodes) + grepl('3008', MOCodes) + grepl('3012', MOCodes) > 1)
+
+## hit and run misd vs felony; rare overlap, should probably classify as felony
+collisions_cleaned %>% filter(grepl('3030', MOCodes), grepl('3029', MOCodes))
+
+## injury y/n; rare overlap; should probably classify as complaint of injury
+collisions_cleaned %>% filter(grepl('3028', MOCodes),  grepl('3026', MOCodes))
+# also 3024, 3027
+
+## city property involved y/n; rare overlap; should probably classify as y
+collisions_cleaned %>% filter(grepl('3035', MOCodes), grepl('3034', MOCodes))
+# misc - 3025, 3602, 3027, 3038, 1218
+
+collisions_with_mo_labels <- collisions_cleaned %>%
+  mutate(
+    AtIntersection = grepl('3036', MOCodes),
+    NotAtIntersection = grepl('3037', MOCodes),
+    MovementPrecedingCollisions = grepl('3701', MOCodes),
+    TypeOfCollision = grepl('3401', MOCodes),
+    CollisionWithVehicle = grepl('3004', MOCodes),
+    CollisionWithParkedVehicle = grepl('3006', MOCodes),
+    CollisionWithFixedObject = grepl('3011', MOCodes),
+    CollisionWithPedestrian = grepl('3003', MOCodes),
+    CollisionWithBike = grepl('3008', MOCodes),
+    CollisionWithOtherObject = grepl('3012', MOCodes),
+    HitAndRun = grepl('3030', MOCodes) | grepl('3029', MOCodes),
+    HitAndRunMisdemeanor = grepl('3030', MOCodes),
+    HitAndRunFelony = grepl('3029', MOCodes),
+    InjuryInvolved = grepl('3026', MOCodes) | grepl('3025', MOCodes) |
+      grepl('3024', MOCodes) | grepl('3027', MOCodes),
+    NonInjury = grepl('3028', MOCodes),
+    ComplaintOfInjury = grepl('3026', MOCodes),
+    VisibleInjury = grepl('3025', MOCodes),
+    SevereInjury = grepl('3024', MOCodes),
+    FatalInjury = grepl('3027', MOCodes),
+    CityPropertyInvolved = grepl('3034', MOCodes),
+    CityPropertyNotInvolved = grepl('3035', MOCodes),
+    PrivatePropertyInvolved = grepl('3032', MOCodes),
+    PrivatePropertyNotInvolved = grepl('3033', MOCodes),
+    UnlicensedMotorist = grepl('3602', MOCodes),
+    DUIMisdemeanor = grepl('3039', MOCodes),
+    DUIFelony = grepl('3038', MOCodes),
+    Sobriety = grepl('3801', MOCodes),
+    HomelessVictim = grepl('1218', MOCodes)
+  )
+
+collisions_with_mo_labels %>% 
+  write.csv('Cleaned Data/CollisionsWithMOLabels.csv',
+            row.names=FALSE)
+```
+
+
+# Cleaning Up Some More
+```{r}
+collisions_with_mo_labels
+```
+
+```{r}
+# Check that DRKey values are unique
+collisions_with_mo_labels %>% nrow()
+collisions_with_mo_labels %>% distinct(DRKey) %>% nrow()
+
+# Range of ReportedDate and OccurredDate
+collisions_with_mo_labels %>% summarise(min(ReportedDate), max(ReportedDate))
+collisions_with_mo_labels %>% summarise(min(OccurredDate), max(OccurredDate))
+
+# Distribution of OccurredTime
+print(collisions_with_mo_labels %>% 
+  group_by(OccurredTime = round(OccurredTime, -2)) %>% 
+  summarise(Count = n()) %>%
+  ggplot(aes(x=OccurredTime, y=Count)) +
+  geom_bar(stat='identity'))
+
+# Oddities w/ AreaName
+  collisions_with_mo_labels %>% group_by(AreaName) %>% 
+    summarise(Count = n()) %>% arrange(AreaName)
+  
+# Oddities w/ VictimSex
+  collisions_with_mo_labels %>% group_by(VictimSex) %>% 
+    summarise(Count = n()) %>% arrange(VictimSex)
+  
+# Oddities w/ VictimDescent
+  collisions_with_mo_labels %>% group_by(VictimDescent) %>% 
+    summarise(Count = n()) %>% arrange(VictimDescent)
+  
+# Oddities w/ PremiseDescription
+  collisions_with_mo_labels %>% group_by(PremiseDescription) %>% 
+    summarise(Count = n()) %>% arrange(PremiseDescription)
+  
+# Oddities w/ Address
+  collisions_with_mo_labels %>% group_by(Address) %>% 
+    summarise(Count = n()) %>% arrange(Address)
+  
+# Oddities w/ CrossStreet
+  collisions_with_mo_labels %>% group_by(CrossStreet) %>% 
+    summarise(Count = n()) %>% arrange(CrossStreet)
+```
+
+## Cleaning up the Address and CrossStreet values
+This is a fucking mess and I don't wanna do it
+```{r}
+street_names <- collisions_with_mo_labels %>% select(Address) %>%
+  rbind(collisions_with_mo_labels %>% mutate(Address = CrossStreet) %>% 
+          select(Address)) %>% distinct() %>% arrange(Address)
+
+all_street_name_parts <- data.frame()
+
+for (i in 1:nrow(street_names)) {
+  street_name_parts <- str_split(street_names[i, 'Address'], ' ')[[1]]
+  n_street_name_parts <- length(street_name_parts)
+  new_street_name_part <- data.frame('Address' = street_names[i, 'Address'],
+                                     'NumStreetNameParts' = n_street_name_parts)
+  
+  for (j in 1:8) {
+    if (n_street_name_parts >= j) {
+      new_street_name_part[paste('StreetNamePart', j, sep='')] = street_name_parts[j] 
+    } else {
+      new_street_name_part[paste('StreetNamePart', j, sep='')] = NA 
+    }
+  }
+  new_street_name_part['LastStreetNamePart'] = street_name_parts %>% tail(n=1)
+  all_street_name_parts <- rbind(all_street_name_parts, new_street_name_part)
+}
+
+```
+
+```{r}
+isolated_street_name_parts <- all_street_name_parts %>% 
+  mutate(StreetNamePart = StreetNamePart1) %>% 
+  select(Address, StreetNamePart) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart2) %>% 
+      select(Address, StreetNamePart)
+  ) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart3) %>% 
+      select(Address, StreetNamePart)
+  ) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart4) %>% 
+      select(Address, StreetNamePart)
+  ) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart5) %>% 
+      select(Address, StreetNamePart)
+  ) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart6) %>% 
+      select(Address, StreetNamePart)
+  ) %>%
+  rbind(
+    all_street_name_parts %>% 
+      mutate(StreetNamePart = StreetNamePart7) %>% 
+      select(Address, StreetNamePart)
+  )
+
+isolated_street_name_parts %>% 
+  filter(!is.na(StreetNamePart)) %>%
+  group_by(StreetNamePart) %>% 
+  summarise(Count = n(), ExampleAddress = last(Address)) %>%
+  arrange(desc(Count)) %>%
+  filter(is.na(as.numeric(StreetNamePart)))
+
+# Most street names that end in a number need that number
+# Try removing initial numbers when that isn't the whole street name
+# Then, remove cardinal directions from the beginning, street type from the end
+# Then, convert "AVENUE", "AVUNUE", and "AVENEUE" to "AVE"
+# Lastly, look again for weirdness and iterate
+
+all_street_name_parts %>% 
+  filter(!is.na(as.numeric(LastStreetNamePart)))
+
+all_street_name_parts %>% 
+  filter(is.na(as.numeric(LastStreetNamePart))) %>%
+  group_by(LastStreetNamePart) %>% 
+  summarise(Count = n(), ExampleAddress = last(Address)) %>%
+  arrange(desc(Count)) %>%
+  filter(is.na(as.numeric(LastStreetNamePart)))
+```
+
+```{r}
+collisions_with_mo_labels %>% filter(
+  grepl('WESTWOOD PA', Address)
+)
+```
+
+```{r}
+street_name_cleanup <- function(street_name) {
+  return(
+    street_name %>% str_to_upper() %>% 
+      str_replace(' PLAZA', '') %>%
+      str_replace(' PLAZ', '') %>%
+      str_replace(' PL', '') %>%
+      str_replace(' BL', '') %>%
+      str_replace(' AVE', '') %>%
+      str_replace(' AV', '') %>%
+      str_replace('S ', '') %>%
+      str_replace('N ', '') %>%
+      str_replace('W ', '') %>%
+      str_replace('E ', '') %>%
+      str_replace('00 ', '') %>%
+      str_replace(' RD', '') %>%
+      str_replace(' ST', '') %>%
+      str_replace(' PA', '') %>%
+      str_replace(' CT', '') %>%
+      str_replace(' CI', '') %>%
+      str_replace(' LN', '') %>%
+      str_replace(' WAY', '') %>%
+      str_replace(' WY', '') %>%
+      str_replace(' FWY', 'FREEWAY') %>%
+      str_replace(' FRWY', 'FREEWAY') %>%
+      str_replace(' E', '') %>%
+      str_replace(' FY', '') %>%
+      str_replace(' O', '') %>%
+      str_replace(' ONRAMP', '') %>%
+      str_replace(' ENTR', '') %>%
+      str_replace(' OFF', '') %>%
+      str_replace(' OFFRA', '') %>%
+      str_replace(' EAST', '') %>%
+      str_replace(' EXIT', '') %>%
+      str_replace(' R', '') %>%
+
+      str_replace(' DR', '')
+  )
+}
+
+cleaned_street_names <- street_names %>%
+  mutate(CleanedAddress = street_name_cleanup(Address)) %>%
+  arrange(CleanedAddress)
+
+cleaned_street_names %>% distinct(CleanedAddress) %>% 
+cleaned_street_names %>% filter(CleanedAddress == '100 C')
+# Order of operations
+# Identify freeways by number, group them
+# Keep weird names like C St
+
+str_split('00 17TH AV', ' ')
+```
+
+```{r}
+collisions_with_mo_labels %>% filter(CrossStreet %>% grepl('CLARENCST'))
+```
+
+
+
+
+## Cleaning up the coordinates that are listed as (0, 0)
+```{r}
+collisions_with_mo_labels %>% filter(Latitude == 0 | Longitude == 0) %>% 
+  group_by(Address, CrossStreet) %>%
+  summarise(Collisions = n()) %>%
+  left_join(
+    collisions_with_mo_labels %>% filter(Latitude != 0, Longitude != 0) %>%
+      group_by(Address, CrossStreet) %>% 
+      summarise(Latitude = mean(Latitude),
+                Longitude = mean(Longitude),
+                NumExamples = n()),
+    by=c('Address', 'CrossStreet')
+  )
+
+print(
+  collisions_with_mo_labels %>% filter(Latitude == 0 | Longitude == 0) %>% 
+    group_by(Address, CrossStreet) %>%
+    summarise(Collisions = n()) %>%
+    left_join(
+      collisions_with_mo_labels %>% filter(Latitude != 0, Longitude != 0) %>%
+        group_by(Address, CrossStreet) %>% 
+        summarise(Latitude = mean(Latitude),
+                  Longitude = mean(Longitude),
+                  NumExamples = n()),
+      by=c('Address', 'CrossStreet')
+    ) %>%
+    ggplot(aes(x=Longitude, y=Latitude, size=Collisions)) +
+    geom_point()
+)
+```
+
+```{r}
+collisions_with_mo_labels %>% 
+  filter(Latitude == 0 | Longitude == 0) %>% 
+  group_by(Year = year(OccurredDate)) %>%
+  summarise(Count = n()) %>% 
+  arrange(Year)
+# These are largely from 2012, 2014, 2020, 2021, 2023
+```
+
+
+## Checking that coordinates have consistent AreaNames and PremiseDescriptions
+I already know the Addresses and CrossStreets can differ, even beyond formatting; this just further indicates I should ignore them
+```{r}
+# Not super consistent, establish a hierarchy
+collisions_with_mo_labels %>% 
+  group_by(Latitude, Longitude, AreaName) %>%
+  summarise(1) %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(NumAreaNames = n_distinct(AreaName),
+            AreaNames = paste(AreaName, collapse = '; ')) %>%
+  arrange(desc(NumAreaNames))
+
+# Also not super consistent; maybe the coordinates aren't accurate?
+collisions_with_mo_labels %>% 
+  group_by(Latitude, Longitude, PremiseDescription) %>%
+  summarise(1) %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(NumPremiseDescriptions = n_distinct(PremiseDescription),
+            PremiseDescriptions = paste(PremiseDescription, collapse = '; ')) %>%
+  arrange(desc(NumPremiseDescriptions))
+```
 
