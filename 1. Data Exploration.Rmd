@@ -17,48 +17,6 @@ library(forecast)
 library(tseries)
 ```
 
-# Load Data
-## Collisions
-```{r cars}
-collisions_df <- read.csv('Data/Traffic_Collision_Data_from_2010_to_Present.csv')
-tail(collisions_df)
-```
-
-#### Clean up the columns
-```{r}
-collisions_cleaned <- collisions_df %>%
-  rename(DRKey = `DR.Number`,
-         ReportedDate = `Date.Reported`,
-         OccurredDate = `Date.Occurred`,
-         OccurredTime = `Time.Occurred`,
-         AreaKey = `Area.ID`,
-         AreaName = `Area.Name`,
-         ReportingDistrict = `Reporting.District`,
-         CrimeCode = `Crime.Code`,
-         CrimeCodeDescription = `Crime.Code.Description`,
-         MOCodes = `MO.Codes`,
-         VictimAge = `Victim.Age`,
-         VictimSex = `Victim.Sex`,
-         VictimDescent = `Victim.Descent`,
-         PremiseCode = `Premise.Code`,
-         PremiseDescription = `Premise.Description`,
-         CrossStreet = `Cross.Street`
-         ) %>%
-  mutate(
-    ReportedDate = as.Date(ReportedDate, format='%m/%d/%Y'),
-    OccurredDate = as.Date(OccurredDate, format='%m/%d/%Y')
-  ) %>% rowwise() %>% mutate(
-    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[1]]),
-    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[2]]),
-  ) %>% select(-Location)
-
-```
-
-```{r}
-# collisions_cleaned %>% write.csv('Cleaned Data/LATrafficCollisions.csv', row.names = FALSE)
-```
-
-
 # Load and Clean Data
 ```{r}
 collisions_df <- read.csv('Data/Traffic_Collision_Data_from_2010_to_Present.csv')
@@ -686,7 +644,7 @@ print(collisions_with_mo_labels %>%
 ```
 
 ## Cleaning up the Address and CrossStreet values
-This is a fucking mess and I don't wanna do it
+This is a mess and I don't wanna do it
 ```{r}
 street_names <- collisions_with_mo_labels %>% select(Address) %>%
   rbind(collisions_with_mo_labels %>% mutate(Address = CrossStreet) %>% 
@@ -834,8 +792,6 @@ str_split('00 17TH AV', ' ')
 ```{r}
 collisions_with_mo_labels %>% filter(CrossStreet %>% grepl('CLARENCST'))
 ```
-
-
 
 
 ## Cleaning up the coordinates that are listed as (0, 0)

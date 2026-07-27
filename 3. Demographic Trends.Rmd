@@ -15,6 +15,7 @@ library(jsonlite)
 library(readxl)
 library(forecast)
 library(tseries)
+library(Morpho)
 options(dplyr.summarise.inform = FALSE)
 options(ggplot2.stat_bin.inform = FALSE)
 ```
@@ -356,16 +357,15 @@ print(
 ```{r}
 zip_code_boundaries <- read_json('Data/ZIP Codes/Zipcodes.geojson')
 
-# zip_codes_df <- read.csv('Cleaned Data/LAZipCodes.csv') %>%
-#   filter(ObjectID < 285)
-# 
-# for (i in range(280:length(zip_code_boundaries$features))) {
+# zip_codes_df <- data.frame()
+
+# for (i in c(1:length(zip_code_boundaries$features))) {
 #   row <- zip_code_boundaries$features[[i]]
-#   
+# 
 #   object_id <- row$properties$OBJECTID
 #   zip_code <- row$properties$ZIPCODE
 #   shape_type <- row$geometry$type
-#   
+# 
 #   if (shape_type == 'Polygon') {
 #     coordinates <- row$geometry$coordinates[[1]]
 #   } else {
@@ -379,10 +379,429 @@ zip_code_boundaries <- read_json('Data/ZIP Codes/Zipcodes.geojson')
 #   }
 # }
 # 
-# zip_codes_df <- zip_codes_df %>% distinct() 
+# zip_codes_df <- zip_codes_df %>% distinct()
+# zip_codes_df %>% group_by(ObjectID) %>% summarise(n())
+
 # zip_codes_df %>% write.csv('Cleaned Data/LAZipCodes.csv', row.names=FALSE)
+zip_codes_df <- read.csv('Cleaned Data/LAZipCodes.csv')
+```
+
+```{r, fig.height=6, fig.width=4}
+zip_codes_centralized <- zip_codes_df %>%
+  group_by(ZIPCode) %>% 
+  mutate(CenterLong = mean(Longitude, na.rm=TRUE), 
+         CenterLat = mean(Latitude, na.rm=TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    AdjustedLongitude = (Longitude - CenterLong)*0.95 + CenterLong,
+    AdjustedLatitude = (Latitude - CenterLat)*0.95 + CenterLat
+  )
+
+print(
+  zip_codes_centralized %>%
+    ggplot(aes(x=AdjustedLongitude, y=AdjustedLatitude, color=(ZIPCode))) +
+    geom_point(size=0.1) + labs(x='Longitude', y='Latitude', color='') +
+    theme(legend.position='none')
+)
+```
+
+## Labeling each collision coordinate location by ZIP code
+```{r}
+collision_coordinates <- collisions_with_labeled_intersections %>%
+  filter(Latitude != 0, Longitude != 0) %>%
+  group_by(Latitude, Longitude) %>% summarise(Collisions = n())
+
+identify_zip_code <- function(collision_latitude, collision_longitude) {
+  possible_zip_codes <- zip_codes_centralized %>%
+    mutate(CollisionLatitude = (collision_latitude),
+           CollisionLongitude = (collision_longitude)) %>%
+    filter(abs(Latitude - CollisionLatitude) < 0.1,
+           abs(Longitude - CollisionLongitude) < 0.1) %>%
+    mutate(
+      NorthSouthOfCenter = case_when(
+        Latitude > CenterLat ~ 'North',
+        Latitude < CenterLat ~ 'South',
+        TRUE ~ 'Neither'),
+      EastWestOfCenter = case_when(
+        Longitude > CenterLong ~ 'East',
+        Longitude < CenterLong ~ 'West',
+        TRUE ~ 'Neither'
+      ))
+           
+  possible_zip_codes <- possible_zip_codes %>%
+    mutate(
+      CollisionLatitudeBetween = case_when(
+        NorthSouthOfCenter == 'North' & 
+          CollisionLatitude > CenterLat & 
+          CollisionLatitude < Latitude ~ 1,
+        NorthSouthOfCenter == 'South' &
+          CollisionLatitude < CenterLat &
+          CollisionLatitude > Latitude ~ 1,
+        NorthSouthOfCenter == 'Neither' &
+          CollisionLatitude == CenterLat ~ 1,
+        TRUE ~ 0
+      )
+    ) %>%
+    filter(CollisionLatitudeBetween == 1) %>%
+    mutate(
+      CollisionLongitudeBetween = case_when(
+        EastWestOfCenter == 'East' & 
+          CollisionLongitude > CenterLong & 
+          CollisionLongitude < Longitude ~ 1,
+        EastWestOfCenter == 'West' &
+          CollisionLongitude < CenterLong &
+          CollisionLongitude > Longitude ~ 1,
+        EastWestOfCenter == 'Neither' &
+          CollisionLongitude == CenterLong ~ 1,
+        TRUE ~ 0
+      )
+    ) %>%
+    filter(CollisionLongitudeBetween == 1) %>%
+    group_by(ZIPCode) %>% summarise(Count = n()) %>% arrange(desc(Count))
+  
+  return(possible_zip_codes[1, 'ZIPCode'][[1]])
+}
+
+collision_coordinates <- collision_coordinates %>%
+  rowwise() %>% mutate(ZIPCode = identify_zip_code(Latitude, Longitude))
+
+collision_coordinates %>% write.csv('Cleaned Data/CollisionCoordinatesByZIPCode.csv', row.names=FALSE)
+```
+
+### Validating this labeling method
+Works better on convex shapes, but there are a lot of oddly shaped ZIP codes this method doesn't quite work for
+```{r, fig.height=6, fig.width=4}
+collision_coordinates %>% filter(is.na(ZIPCode))
+collision_coordinates %>% group_by(ZIPCode) %>% summarise(Count=n()) %>% arrange(desc(Count))
+
+collision_zip_codes <- collision_coordinates %>% ungroup() %>% select(ZIPCode) %>% distinct() %>% drop_na()
+
+all_zip_codes <- collision_coordinates %>% select(ZIPCode, Longitude, Latitude) %>% 
+  ungroup() %>% mutate(Type = 'collision') %>%
+  rbind(zip_codes_centralized %>% select(ZIPCode, Longitude, Latitude) %>% 
+          mutate(Type = 'Boundary'))
+
+for (zip_code in collision_zip_codes$ZIPCode) {
+  print(
+    all_zip_codes %>%
+      filter(ZIPCode == local(zip_code)) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Type)) +
+      geom_point(size=1) + labs(x='Longitude', y='Latitude', color='') +
+      theme(legend.position='none') 
+  )
+}
+```
+
+
+## Interpolating the ZIP code boundary coordinates
+```{r}
+zip_codes_indexed <- zip_codes_centralized %>%
+  select(ObjectID, ZIPCode, Longitude, Latitude) %>%
+  group_by(ZIPCode) %>% 
+  mutate(Index =  row_number()) %>% 
+  ungroup() %>%
+  (function(df) df %>% left_join(df %>% group_by(ZIPCode) %>% mutate(LastIndex = max(Index)) %>%
+                                   mutate(Index = ifelse(Index == 1, LastIndex, Index - 1), 
+                                          NextLatitude = Latitude, NextLongitude = Longitude) %>% 
+                                   select(ZIPCode, Index, NextLatitude, NextLongitude), by=c('ZIPCode', 'Index'))) %>%
+  mutate(DistanceToNext = sqrt((NextLatitude - Latitude)**2  + (NextLongitude - Longitude)**2))
+```
+
+```{r}
+print(
+  zip_codes_indexed %>%
+    ggplot(aes(x=DistanceToNext)) +
+    geom_histogram(binwidth = 0.001)
+)
+
+zip_codes_indexed %>% arrange(desc(DistanceToNext))
+zip_codes_indexed %>% group_by(DistanceToNext = round(DistanceToNext, 4)) %>%
+  summarise(Count = n()) %>% arrange(desc(DistanceToNext))
 ```
 
 ```{r}
 
+interpolate_coordinates <- function(distance_to_next, boundary_latitude, boundary_longitude, 
+                                    next_boundary_latitude, next_boundary_longitude, interpol_distance) {
+    num_steps <- floor(distance_to_next/interpol_distance)
+    latitude_diff <- next_boundary_latitude - boundary_latitude
+    longitude_diff <- next_boundary_longitude - boundary_longitude
+    
+    new_latitudes <- ''
+    new_longitudes <- ''
+    
+    for (i in c(1:num_steps)) {
+      new_latitudes <- paste(new_latitudes, ', ', boundary_latitude + latitude_diff*i/(1+num_steps))
+      new_longitudes <- paste(new_longitudes, ', ', boundary_longitude + longitude_diff*i/(1+num_steps))
+    }
+    
+    return(paste(new_latitudes, new_longitudes, sep=';'))
+  }
+
+start_time <- Sys.time()
+interpolation_distance <- 0.00005
+
+zip_codes_interpolated <- zip_codes_indexed %>%
+  rowwise() %>%
+  mutate(
+    InterpolatedCoordinates = ifelse(
+      DistanceToNext > local(interpolation_distance) & (DistanceToNext < 0.0095 | ZIPCode != '90803'), # 90803 has some non-contiguous areas 
+      interpolate_coordinates(DistanceToNext, Latitude, Longitude,
+                              NextLatitude, NextLongitude, local(interpolation_distance)), NA)
+  ) %>%
+  separate(InterpolatedCoordinates, sep=';', 
+           into=c('InterpolatedLatitude', 'InterpolatedLongitude')) %>%
+  separate_longer_delim(c(InterpolatedLatitude, InterpolatedLongitude), delim=', ') %>%
+  mutate(
+    InterpolatedLongitude = as.numeric(InterpolatedLongitude),
+    InterpolatedLatitude = as.numeric(InterpolatedLatitude),
+    Longitude = ifelse(is.na(InterpolatedLongitude), Longitude, InterpolatedLongitude),
+    Latitude = ifelse(is.na(InterpolatedLatitude), Latitude, InterpolatedLatitude),
+  ) %>% select(-InterpolatedLatitude, -InterpolatedLongitude)
+
+zip_codes_reindexed <- zip_codes_interpolated %>%
+  select(ObjectID, ZIPCode, Longitude, Latitude) %>%
+  mutate(Latitude = round(Latitude, 4), Longitude = round(Longitude, 4)) %>%
+  distinct() %>%
+  group_by(ZIPCode) %>%
+  mutate(Index = row_number()) %>%
+  ungroup() %>%
+  (function(df) df %>% left_join(df %>% group_by(ZIPCode) %>% mutate(LastIndex = max(Index)) %>%
+                                   mutate(Index = ifelse(Index == 1, LastIndex, Index - 1), 
+                                          NextLatitude = Latitude, NextLongitude = Longitude) %>% 
+                                   select(ZIPCode, Index, NextLatitude, NextLongitude), by=c('ZIPCode', 'Index'))) %>%
+  mutate(DistanceToNext = sqrt((NextLatitude - Latitude)**2  + (NextLongitude - Longitude)**2 ))
+
+print(Sys.time() - start_time)
+
+zip_codes_reindexed %>% filter(DistanceToNext > 0.0001) # 0.0001414214
+zip_codes_reindexed %>% mutate(LatitudeDiff = NextLatitude - Latitude) %>% filter(LatitudeDiff > 0.0001)
+zip_codes_reindexed %>% mutate(LongitudeDiff = NextLongitude - Longitude) %>% filter(LongitudeDiff > 0.0001)
+
+# zip_codes_reindexed %>% write.csv('Cleaned Data/LAZipCodesInterpolated.csv', row.names=FALSE)
+# zip_codes_reindexed <- read.csv('Cleaned Data/LAZipCodesInterpolated.csv')
+```
+
+## Second attempt at labeling each collision coordinate location by ZIP code
+```{r}
+identify_zip_code_by_axis <- function(collision_latitude, collision_longitude) {
+  rounded_latitude <- round(collision_latitude, 4)
+  rounded_longitude <- round(collision_longitude, 4)
+  
+  latitude_rounding_offset <- collision_latitude - rounded_latitude
+  longitude_rounding_offset <- collision_longitude - rounded_longitude
+  
+  possible_zip_codes <- zip_codes_reindexed %>%
+    mutate(RoundedLatitude = round(Latitude - latitude_rounding_offset, 4) ,
+           RoundedLongitude = round(Longitude - latitude_rounding_offset, 4)) %>%
+    filter(RoundedLatitude == local(rounded_latitude) |
+           RoundedLongitude == local(rounded_longitude))
+  
+  likely_zip_code <- possible_zip_codes %>% 
+    filter(RoundedLatitude == local(rounded_latitude),
+           Longitude < collision_longitude) %>% select(ZIPCode) %>% distinct() %>%
+    rbind(possible_zip_codes %>%
+            filter(RoundedLatitude == local(rounded_latitude),
+                   Longitude > collision_longitude) %>% 
+            select(ZIPCode) %>% distinct()) %>%
+    rbind(possible_zip_codes %>% 
+            filter(RoundedLongitude == local(rounded_longitude),
+                   Latitude > collision_latitude) %>% 
+            select(ZIPCode) %>% distinct()) %>%
+    rbind(possible_zip_codes %>% 
+            filter(RoundedLongitude == local(rounded_longitude), 
+                   Latitude < collision_latitude) %>% 
+            select(ZIPCode) %>% distinct()) %>%
+    group_by(ZIPCode) %>% summarise(Count = n()) %>% 
+    filter(Count == 4) %>%
+    arrange(desc(Count))
+  
+  return(likely_zip_code[1, 'ZIPCode'][[1]])
+} 
+
+collision_coordinates <- collision_coordinates %>%
+  rowwise() %>% mutate(ZIPCode = identify_zip_code_by_axis(Latitude, Longitude))
+
+collision_coordinates %>% write.csv('Cleaned Data/CollisionCoordinatesByZIPCode.csv', row.names=FALSE)
+collision_coordinates <- read.csv('Cleaned Data/CollisionCoordinatesByZIPCode.csv')
+```
+
+```{r}
+collision_coordinates %>% filter(is.na(ZIPCode))
+collision_coordinates %>% group_by(ZIPCode) %>% summarise(Count=n()) %>% arrange(desc(Count))
+
+collision_zip_codes <- collision_coordinates %>% ungroup() %>% select(ZIPCode) %>% distinct() %>% drop_na()
+
+all_zip_codes <- collision_coordinates %>% select(ZIPCode, Longitude, Latitude) %>% 
+  ungroup() %>% mutate(Type = 'collision') %>%
+  rbind(zip_codes_reindexed %>% select(ZIPCode, Longitude, Latitude) %>% 
+          mutate(Type = 'Boundary'))
+
+for (zip_code in collision_zip_codes$ZIPCode) {
+# for (zip_code in c('90732', '90275')) {
+  print(
+    all_zip_codes %>%
+      filter(ZIPCode == local(zip_code)) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Type)) +
+      geom_point(size=1) + labs(x='Longitude', y='Latitude', color='') +
+      theme(legend.position='none') 
+  )
+}
+``` 
+
+## Attempting another method to label the collision coordinates by ZIP code
+```{r}
+# find the angle of each boundary point walk, then find the differences between each angle
+# if the angles tend to increase, the walk is counterclockwise
+zip_codes_by_rotation <- zip_codes_reindexed %>% # filter(ZIPCode == '90001') %>%
+  mutate(
+    LatitudeDiff = NextLatitude - Latitude,
+    LongitudeDiff = NextLongitude - Longitude,
+    Slope = (LatitudeDiff/LongitudeDiff)*DistanceToNext
+  ) %>%
+  group_by(ZIPCode) %>% 
+  summarise(
+    TotalSlope = sum(Slope, na.rm=TRUE),
+    TotalLatitudeChange = sum(LatitudeDiff, na.rm=TRUE),
+    TotalLongitudeChange = sum(LongitudeDiff, na.rm=TRUE),
+  )
+
+test_df <- data.frame(c('Latitude' = c(1, 3, 5, 4, 6),
+                        'Longitude' = c(1, -2, -1, 3, )))
+```
+
+```{r, fig.height=6, fig.width=4}
+
+identify_zip_code_by_nearest_boundaries <- function(collision_latitude, collision_longitude) {
+  
+  possible_zip_codes <- zip_codes_recentralized %>%
+    filter(abs(AdjustedLatitude - collision_latitude) < 0.001,
+           abs(AdjustedLongitude - collision_longitude) < 0.001)
+  
+  # likely_zip_code <- possible_zip_codes %>%
+  #   mutate(LatitudeDiff = collision_latitude - AdjustedLatitude,
+  #          LongitudeDiff = collision_longitude - AdjustedLongitude,
+  #          Distance = sqrt(LatitudeDiff**2 + LongitudeDiff**2)) %>%
+  #   # arrange(Distance) %>% group_by(ZIPCode) %>% mutate(Rank = row_number()) %>% ungroup() %>% filter(Rank <= 5) %>% 
+  #   group_by(ZIPCode) %>% 
+  #   summarise(AvgDistance = mean(Distance)) %>%
+  #   arrange((AvgDistance))
+  
+  # return(likely_zip_code[1, 'ZIPCode'][[1]])
+  return(nrow(possible_zip_codes))
+}
+
+boundary_adjustment <- 0.00001
+
+zip_codes_recentralized <- zip_codes_reindexed %>%
+  group_by(ZIPCode) %>% 
+  mutate(MaxLatitude = max(Latitude), MinLatitude = min(Latitude),
+         MaxLongitude = max(Longitude), MinLongitude = min(Longitude),
+         CenterLat = (MaxLatitude + MinLatitude)/2,
+         CenterLong = (MaxLongitude + MinLongitude)/2) %>%
+  ungroup() %>%
+  mutate(
+    # AdjustedLatitude = (Latitude - CenterLat)*local(boundary_adjustment) + CenterLat,
+    # AdjustedLongitude = (Longitude - CenterLong)*local(boundary_adjustment) + CenterLong,
+    
+    AdjustedLatitude = ifelse(Latitude > CenterLat, Latitude - local(boundary_adjustment), 
+                              Latitude + local(boundary_adjustment)),
+    AdjustedLongitude = ifelse(Longitude > CenterLong, Longitude - local(boundary_adjustment), 
+                              Longitude + local(boundary_adjustment)),
+  )
+
+
+print(
+  zip_codes_recentralized %>% 
+    ggplot(aes(x=AdjustedLongitude, y=AdjustedLatitude, color=ZIPCode)) +
+    geom_point(size=0.1) +
+    theme(legend.position='none')
+)
+
+collision_coordinates_by_nearest_boundaries <- collision_coordinates %>%
+  rowwise() %>% mutate(ZIPCode = identify_zip_code_by_nearest_boundaries(Latitude, Longitude))
+
+collision_coordinates_by_nearest_boundaries %>% arrange(ZIPCode)
+```
+
+```{r}
+collision_coordinates_by_nearest_boundaries %>% filter(is.na(ZIPCode))
+collision_coordinates_by_nearest_boundaries %>% group_by(ZIPCode) %>% summarise(Count=n()) %>% arrange(desc(Count))
+
+collision_zip_codes_by_nearest_boundaries <- collision_coordinates_by_nearest_boundaries %>% 
+  ungroup() %>% select(ZIPCode) %>% distinct() %>% drop_na()
+
+all_zip_codes_by_nearest_boundary <- collision_zip_codes_by_nearest_boundaries %>% 
+  select(ZIPCode, Longitude, Latitude) %>% 
+  ungroup() %>% mutate(Type = 'collision') %>%
+  rbind(zip_codes_reindexed %>% select(ZIPCode, Longitude, Latitude) %>% 
+          mutate(Type = 'Boundary'))
+
+for (zip_code in (all_zip_codes_by_nearest_boundary %>% select(ZIPCode) %>% distinct(ZIPCode))$ZIPCode) {
+# for (zip_code in c('90732', '90275')) {
+  print(
+    all_zip_codes_by_nearest_boundary %>%
+      filter(ZIPCode == local(zip_code)) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Type)) +
+      geom_point(size=1) + labs(x='Longitude', y='Latitude', color='') +
+      theme(legend.position='none') 
+  )
+}
+```
+
+## Labeling the collision coordinates ZIP codes using a Latitude-wise method
+```{r}
+all_coordinates <- zip_codes_reindexed %>% mutate(CoordinateType = 'Boundary') %>%
+  mutate(Latitude = round(Latitude, 4), Longitude = round(Longitude, 4),
+         LateralDirection = case_when(
+           NextLatitude > Latitude ~ 1,
+           NextLatitude < Latitude ~ -1,
+           TRUE ~ 0),
+         Longitude = case_when(
+           LateralDirection == 1 ~ Longitude - 0.00001,
+           LateralDirection == -1 ~ Longitude + 0.00001,
+           TRUE ~ Longitude)) %>%
+  select(Latitude, Longitude, ZIPCode, CoordinateType) %>%
+  rbind(collisions_with_labeled_intersections %>% 
+          filter(Latitude != 0, Longitude != 0) %>% 
+          mutate(ZIPCode = NA, CoordinateType = 'Collision') %>% 
+          select(Latitude, Longitude, ZIPCode, CoordinateType) %>% distinct()) %>%
+  arrange(Latitude, Longitude, ZIPCode) %>%
+  mutate(IsCollisionPoint = ifelse(CoordinateType == 'Collision', 1, 0)) %>%
+  mutate(Backfilled = ZIPCode, ForwardFilled = ZIPCode) %>%
+  fill(Backfilled, .direction='down') %>%
+  fill(ForwardFilled, .direction='up') 
+  
+
+# nudge each pair of boundary coordinates from the same ZIP code closer to each other
+all_coordinates %>% group_by(Latitude) %>% mutate(FirstLongitude = min(Longitude)) %>% ungroup() %>%
+  filter(Longitude == FirstLongitude) %>% group_by(Latitude, Longitude) %>% summarise(NumZips = n_distinct(ZIPCode)) %>% arrange(desc(NumZips))
+```
+
+```{r}
+all_coordinates %>% mutate(Backfilled = ZIPCode, ForwardFilled = ZIPCode) %>%
+  fill(Backfilled, .direction='down') %>%
+  fill(ForwardFilled, .direction='up') %>%
+  filter(Backfilled != ForwardFilled)
+```
+
+```{r}
+relevant_zip_codes <- (all_coordinates %>% group_by(ForwardFilled) %>% 
+  summarise(NumCollisionPoints = sum(IsCollisionPoint)) %>%
+  filter(NumCollisionPoints > 0) %>% ungroup() %>%
+  select(ForwardFilled))$ForwardFilled
+
+for (zip_code in relevant_zip_codes) {
+  print(
+    all_coordinates %>% filter(ForwardFilled == local(zip_code)) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=CoordinateType)) +
+      geom_point(size=0.2) +
+      ggtitle(local(zip_code))
+  )
+}
+
+```
+```{r}
+all_coordinates %>% filter(ForwardFilled == '90007') 
+all_coordinates %>% filter(Latitude == 33.9581) %>% arrange(Longitude)
 ```

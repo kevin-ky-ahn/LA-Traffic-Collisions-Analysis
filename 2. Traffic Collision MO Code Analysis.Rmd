@@ -42,29 +42,8 @@ collisions_with_injury_type <- collisions_with_injury_type %>% mutate(
       TRUE ~ 'Unspecified'
     ))
 ```
-# Misc Details
-```{r}
-# movement preceding collisions
-# city property
-# private property
-# unlicensed motorist
-# homeless victim
-```
-
-# Victim Demographics
-```{r}
-# histogram, map of proportion, map of mean, map by type
-# injury rates/severity
-```
 
 # Comparing Intersections
-```{r}
-# histogram, map of proportion, map by type
-# looking at relatively bad intersections (high number of collisions relative to nearby non-intersections)
-# injury rates/severity
-
-```
-
 ## First round of analysis - preliminary, no real leads here
 ```{r}
 # histogram
@@ -1036,9 +1015,9 @@ collisions_with_labeled_intersections <- collisions_with_labeled_intersections %
       VictimDescent == 'H' ~ 'Hispanic/Latino',
       VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
       VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
-      VictimDescent == 'B' ~ 'Black American',
+      VictimDescent == 'B' ~ 'Black',
       VictimDescent == 'W' ~ 'White',
-      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other/Unknown',
+      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
       VictimDescent == 'I' ~ 'Native American/Alaskan',
       TRUE ~ '?'
       ),
