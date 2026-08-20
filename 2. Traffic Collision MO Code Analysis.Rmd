@@ -309,8 +309,52 @@ collisions_with_labeled_intersections <- collisions_with_injury_type %>%
                                      as.numeric(CrossStreet != ''), 
                                      CollisionAtIntersection),
     OccurredYear = year(OccurredDate)
-  )
-
+  ) %>% 
+  mutate(MostVulnerableCollisionObject = factor(case_when(
+    CollisionWithPedestrian ~ 'Pedestrian', 
+    CollisionWithBike ~ 'Bike',
+    CollisionWithOtherObject ~ 'Other Object',
+    CollisionWithVehicle ~ 'Vehicle',
+    CollisionWithFixedObject ~ 'Fixed Object',
+    CollisionWithParkedVehicle ~ 'Parked Vehicle',
+    TRUE ~ 'Unknown'),
+    levels = c('Pedestrian', 'Bike', 'Vehicle', 'Fixed Object',
+               'Parked Vehicle', 'Other Object'))) %>%
+  mutate(HitAndRunSeverity = factor(case_when(
+    HitAndRunFelony ~ 'Hit & Run Felony', 
+    HitAndRunMisdemeanor ~ 'Hit & Run Misdemeanor',
+    HitAndRun ~ 'Other Hit & Run',
+    TRUE ~ 'Not Labelled Hit & Run'),
+    levels = c('Hit & Run Felony', 'Hit & Run Misdemeanor',
+               'Other Hit & Run', 'Not Labelled Hit & Run')))  %>%
+  mutate(DUI = (DUIMisdemeanor | DUIFelony),
+         DUISeverity = factor(case_when(
+           DUIFelony ~ 'DUI Felony', 
+           DUIMisdemeanor ~ 'DUI Misdemeanor',
+           Sobriety ~ 'Sobriety',
+           TRUE ~ 'Unspecified'),
+           levels = c('DUI Felony', 'DUI Misdemeanor',
+                      'Sobriety', 'Unspecified'))) %>% 
+  mutate(PrivatePropertyInvolvement = factor(case_when(
+    PrivatePropertyInvolved ~ 'Involved', 
+    PrivatePropertyNotInvolved ~ 'Not Involved',
+    TRUE ~ 'Unspecified'),
+    levels = c('Involved', 'Not Involved', 'Unspecified'))) %>% 
+  mutate(CityePropertyInvolvement = factor(case_when(
+    CityPropertyInvolved ~ 'Involved', 
+    CityPropertyNotInvolved ~ 'Not Involved',
+    TRUE ~ 'Unspecified'),
+    levels = c('Involved', 'Not Involved', 'Unspecified'))) %>% 
+  mutate(VictimEthnicity = case_when(
+    VictimDescent == 'H' ~ 'Hispanic',
+    VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
+    VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
+    VictimDescent == 'B' ~ 'Black',
+    VictimDescent == 'W' ~ 'White',
+    VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
+    VictimDescent == 'I' ~ 'Indigenous',
+    TRUE ~ '?'),
+    HispanicOrLatinoVictim = (VictimEthnicity == 'Hispanic'))
 ```
 
 ## Finally examining the intersections vs non-intersections
@@ -823,18 +867,6 @@ mapping_hotspots(collisions_with_labeled_intersections,
 
 # Collision Object
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-        mutate(MostVulnerableCollisionObject = factor(case_when(
-          CollisionWithPedestrian ~ 'Pedestrian', 
-          CollisionWithBike ~ 'Bike',
-          CollisionWithOtherObject ~ 'Other Object',
-          CollisionWithVehicle ~ 'Vehicle',
-          CollisionWithFixedObject ~ 'Fixed Object',
-          CollisionWithParkedVehicle ~ 'Parked Vehicle',
-          TRUE ~ 'Unknown'),
-          levels = c('Pedestrian', 'Bike', 'Vehicle', 'Fixed Object',
-                     'Parked Vehicle', 'Other Object')))
-
 intro_graphs(collisions_with_labeled_intersections, 'MostVulnerableCollisionObject', 
              label='Collision Object', year=2024)
 ```
@@ -859,15 +891,6 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'CollisionWithPedes
 
 # Hit and Runs
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-        mutate(HitAndRunSeverity = factor(case_when(
-          HitAndRunFelony ~ 'Hit & Run Felony', 
-          HitAndRunMisdemeanor ~ 'Hit & Run Misdemeanor',
-          HitAndRun ~ 'Other Hit & Run',
-          TRUE ~ 'Not Labelled Hit & Run'),
-          levels = c('Hit & Run Felony', 'Hit & Run Misdemeanor',
-                     'Other Hit & Run', 'Not Labelled Hit & Run')))
-
 intro_graphs(collisions_with_labeled_intersections, 'HitAndRunSeverity', 
              label='Hit & Run Severity', year=2024)
 
@@ -892,16 +915,6 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'HitAndRun',
 
 # DUIs
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-        mutate(DUI = (DUIMisdemeanor | DUIFelony),
-               DUISeverity = factor(case_when(
-                 DUIFelony ~ 'DUI Felony', 
-                 DUIMisdemeanor ~ 'DUI Misdemeanor',
-                 Sobriety ~ 'Sobriety',
-                 TRUE ~ 'Unspecified'),
-                 levels = c('DUI Felony', 'DUI Misdemeanor',
-                            'Sobriety', 'Unspecified')))
-
 intro_graphs(collisions_with_labeled_intersections, 'DUISeverity', 
              label='DUI Severity', year=2024)
 ```
@@ -923,13 +936,6 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'DUI',
 
 # Private Property Involved
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-        mutate(PrivatePropertyInvolvement = factor(case_when(
-                 PrivatePropertyInvolved ~ 'Involved', 
-                 PrivatePropertyNotInvolved ~ 'Not Involved',
-                 TRUE ~ 'Unspecified'),
-                 levels = c('Involved', 'Not Involved', 'Unspecified')))
-
 intro_graphs(collisions_with_labeled_intersections, 'PrivatePropertyInvolvement', 
              label='Private Property Involved', year=2024)
 ```
@@ -948,13 +954,6 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'PrivatePropertyInv
 
 # Public Property Involved
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-        mutate(CityePropertyInvolvement = factor(case_when(
-                 CityPropertyInvolved ~ 'Involved', 
-                 CityPropertyNotInvolved ~ 'Not Involved',
-                 TRUE ~ 'Unspecified'),
-                 levels = c('Involved', 'Not Involved', 'Unspecified')))
-
 intro_graphs(collisions_with_labeled_intersections, 'CityePropertyInvolvement', 
              label='City Property Involvement', year=2024)
 ```
@@ -1009,21 +1008,6 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'HomelessVictim',
 
 # Victim Descent
 ```{r, fig.height=2, fig.width=4}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
-  mutate(
-    VictimEthnicity = case_when(
-      VictimDescent == 'H' ~ 'Hispanic/Latino',
-      VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
-      VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
-      VictimDescent == 'B' ~ 'Black',
-      VictimDescent == 'W' ~ 'White',
-      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
-      VictimDescent == 'I' ~ 'Native American/Alaskan',
-      TRUE ~ '?'
-      ),
-    HispanicOrLatinoVictim = (VictimEthnicity == 'Hispanic/Latino')
-    )
-
 intro_graphs(collisions_with_labeled_intersections, 'VictimEthnicity', 
              label='Victim Ethnicity', year=2024)
 
@@ -1045,7 +1029,7 @@ graphing_injury_rates(collisions_with_labeled_intersections, 'VictimEthnicity',
 
 # Tracking Number of MOCodes over Time
 ```{r}
-collisions_with_labeled_intersections <- collisions_with_labeled_intersections %>%
+num_mo_codes <- collisions_with_labeled_intersections %>%
   # select(-NumMOCodes) %>%
   left_join(collisions_with_labeled_intersections %>% 
               mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
