@@ -1,0 +1,548 @@
+---
+title: "Traffic Collisions Data Validation"
+output: html_document
+date: "2026-01-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+```
+
+# Validating Data for File 3. Data Exploration
+# Checking for intersections with multiple sets of coordinates
+```{r}
+collisions_cleaned %>% 
+  filter(Latitude != 0 | Longitude != 0) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude) %>% 
+  summarise(Collisions = n()) %>% 
+  group_by(Address, CrossStreet) %>% 
+  summarise(
+    NumCoordinates = n(),
+    MaxLat = max(Latitude),
+    MinLat = min(Latitude),
+    MaxLon = max(Longitude),
+    MinLon = min(Longitude),
+    LatRange = MaxLat - MinLat,
+    LonRange = MaxLon - MinLon,
+    LatStd = sd(Latitude),
+    LonStd = sd(Longitude),
+    AvgLat = mean(Latitude),
+    AvgLon = mean(Longitude),
+    ModeLat = mode(Latitude),
+    ModeLon = mode(Longitude)
+  ) %>%
+  arrange(desc(NumCoordinates))
+```
+
+```{r}
+print(collisions_cleaned %>% filter(Address == 'PACIFIC COAST HY', CrossStreet == 'FIGUEROA ST') %>%
+        select(Address, CrossStreet, Latitude, Longitude, PremiseDescription) %>%
+        group_by(Latitude, Longitude) %>% summarise(Count = n()) %>%
+        ggplot(aes(x=Longitude, y=Latitude, size=Count)) +
+        geom_point())
+```
+
+```{r}
+collisions_cleaned %>% filter(Latitude == 33.9892, Longitude ==	-118.2827)
+```
+
+## Classifying the MO Codes, based on the PDF I found
+```{r}
+collision_mo_codes %>% 
+  filter(!is.na(MOCode)) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+# Select the MOCodes of interest
+collision_mo_codes %>% 
+  filter(MOCode %in% c(3004, 3006, 3011, 3003, 3008, 3012,
+                       3037, 3036, 3030, 3029, 3028, 3026, 3025, 3035, 3034, 3602, 3039, 3027, 3038, 1218
+                       )) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+# 3004, 3006, 3011, 3003, 3008, 3012
+# 3037 vs 3036, 3030/3029, 3028 vs 3026/3025, 3035 vs 3034, 3602, 3039, 3027, 3038, 1218
+```
+
+```{r}
+collision_mo_codes %>% 
+  filter(MOCode %in% c(0947, 3025,			
+3101, 3401, 3701, 3006, 3030, 3032,			
+0605, 3101, 3401, 3701, 3011, 3030, 3036,		
+0605, 3101, 3401, 3701, 3006, 3030,			
+3101, 3401, 3701, 3006, 3034, 3032,			
+3101, 3401, 3701, 3006, 3030, 0605,			
+3028, 4011, 3030, 3034, 0605, 3101, 3401, 3701, 3011, 3104)) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+
+collisions_with_mo_labels %>% 
+  filter(CrossStreet == '') %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(AtIntersection = max(AtIntersection),
+            PrivatePropertyInvolved = max(PrivatePropertyInvolved)) %>%
+  filter(AtIntersection == 1, PrivatePropertyInvolved == 1) %>%
+  select(Latitude, Longitude)
+
+collisions_with_mo_labels %>%
+  filter(Latitude == 34.1367	, Longitude == -118.2713) %>%
+  select(AtIntersection, PrivatePropertyInvolved, CrossStreet)
+```
+
+```{r}
+# checking for MO Code overlap
+## at intersection y/n - rare overlap seems to be more at intersections
+collisions_cleaned %>% filter(grepl('3037', MOCodes), grepl('3036', MOCodes))
+
+## collision w/; rare overlap, should probably classify as multiple and also make individual columns
+collisions_cleaned %>% filter(grepl('3004', MOCodes) + grepl('3006', MOCodes) + grepl('3011', MOCodes) + 
+                              grepl('3003', MOCodes) + grepl('3008', MOCodes) + grepl('3012', MOCodes) > 1)
+
+## hit and run misd vs felony; rare overlap, should probably classify as felony
+collisions_cleaned %>% filter(grepl('3030', MOCodes), grepl('3029', MOCodes))
+
+## injury y/n; rare overlap; should probably classify as complaint of injury
+collisions_cleaned %>% filter(grepl('3028', MOCodes),  grepl('3026', MOCodes))
+# also 3024, 3027
+
+## city property involved y/n; rare overlap; should probably classify as y
+collisions_cleaned %>% filter(grepl('3035', MOCodes), grepl('3034', MOCodes))
+# misc - 3025, 3602, 3027, 3038, 1218
+
+```
+
+# Cleaning Up Some More
+```{r}
+collisions_with_mo_labels
+```
+
+```{r}
+# Check that DRKey values are unique
+collisions_with_mo_labels %>% nrow()
+collisions_with_mo_labels %>% distinct(DRKey) %>% nrow()
+
+# Range of ReportedDate and OccurredDate
+collisions_with_mo_labels %>% summarise(min(ReportedDate), max(ReportedDate))
+collisions_with_mo_labels %>% summarise(min(OccurredDate), max(OccurredDate))
+
+# Distribution of OccurredTime
+print(collisions_with_mo_labels %>% 
+  group_by(OccurredTime = round(OccurredTime, -2)) %>% 
+  summarise(Count = n()) %>%
+  ggplot(aes(x=OccurredTime, y=Count)) +
+  geom_bar(stat='identity'))
+
+# Oddities w/ AreaName
+  collisions_with_mo_labels %>% group_by(AreaName) %>% 
+    summarise(Count = n()) %>% arrange(AreaName)
+  
+# Oddities w/ VictimSex
+  collisions_with_mo_labels %>% group_by(VictimSex) %>% 
+    summarise(Count = n()) %>% arrange(VictimSex)
+  
+# Oddities w/ VictimDescent
+  collisions_with_mo_labels %>% group_by(VictimDescent) %>% 
+    summarise(Count = n()) %>% arrange(VictimDescent)
+  
+# Oddities w/ PremiseDescription
+  collisions_with_mo_labels %>% group_by(PremiseDescription) %>% 
+    summarise(Count = n()) %>% arrange(PremiseDescription)
+  
+# Oddities w/ Address
+  collisions_with_mo_labels %>% group_by(Address) %>% 
+    summarise(Count = n()) %>% arrange(Address)
+  
+# Oddities w/ CrossStreet
+  collisions_with_mo_labels %>% group_by(CrossStreet) %>% 
+    summarise(Count = n()) %>% arrange(CrossStreet)
+```
+
+# Cleaning up the coordinates that are listed as (0, 0)
+```{r}
+collisions_with_mo_labels %>% filter(Latitude == 0 | Longitude == 0) %>% 
+  group_by(Address, CrossStreet) %>%
+  summarise(Collisions = n()) %>%
+  left_join(
+    collisions_with_mo_labels %>% filter(Latitude != 0, Longitude != 0) %>%
+      group_by(Address, CrossStreet) %>% 
+      summarise(Latitude = mean(Latitude),
+                Longitude = mean(Longitude),
+                NumExamples = n()),
+    by=c('Address', 'CrossStreet')
+  )
+
+print(
+  collisions_with_mo_labels %>% filter(Latitude == 0 | Longitude == 0) %>% 
+    group_by(Address, CrossStreet) %>%
+    summarise(Collisions = n()) %>%
+    left_join(
+      collisions_with_mo_labels %>% filter(Latitude != 0, Longitude != 0) %>%
+        group_by(Address, CrossStreet) %>% 
+        summarise(Latitude = mean(Latitude),
+                  Longitude = mean(Longitude),
+                  NumExamples = n()),
+      by=c('Address', 'CrossStreet')
+    ) %>%
+    ggplot(aes(x=Longitude, y=Latitude, size=Collisions)) +
+    geom_point()
+)
+```
+
+```{r}
+collisions_with_mo_labels %>% 
+  filter(Latitude == 0 | Longitude == 0) %>% 
+  group_by(Year = year(OccurredDate)) %>%
+  summarise(Count = n()) %>% 
+  arrange(Year)
+# These are largely from 2012, 2014, 2020, 2021, 2023
+```
+
+# Checking that coordinates have consistent AreaNames and PremiseDescriptions
+I already know the Addresses and CrossStreets can differ, even beyond formatting; this just further indicates I should ignore them
+```{r}
+# Not super consistent, establish a hierarchy
+collisions_with_mo_labels %>% 
+  group_by(Latitude, Longitude, AreaName) %>%
+  summarise(1) %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(NumAreaNames = n_distinct(AreaName),
+            AreaNames = paste(AreaName, collapse = '; ')) %>%
+  arrange(desc(NumAreaNames))
+
+# Also not super consistent; maybe the coordinates aren't accurate?
+collisions_with_mo_labels %>% 
+  group_by(Latitude, Longitude, PremiseDescription) %>%
+  summarise(1) %>%
+  group_by(Latitude, Longitude) %>%
+  summarise(NumPremiseDescriptions = n_distinct(PremiseDescription),
+            PremiseDescriptions = paste(PremiseDescription, collapse = '; ')) %>%
+  arrange(desc(NumPremiseDescriptions))
+```
+
+# Validating Data for File 4. MO Code Analysis
+# Tracking Number of MOCodes over Time
+```{r, fig.height=2, fig.width=4}
+print(collisions_with_labeled_intersections %>%
+        filter(OccurredDate >= '2013-01-01',
+               OccurredDate < '2025-03-01') %>%
+        group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+        summarise(AvgNumMOCodes = mean(NumMOCodes, na.rm=TRUE)) %>%
+        ggplot(aes(x=OccurredDate, y=AvgNumMOCodes)) +
+        geom_line() +
+        labs(x='Date of Collisions', y='Number of MO Codes') +
+        theme_set(theme_gray(base_size = 5)) +
+        ggtitle('Avg Number of MO Codes over Time'))
+```
+
+```{r}
+print(
+  collision_mo_codes_labeled %>%
+    mutate(Description = ifelse(Rank > 10, 'Other', Description)) %>%
+    group_by(Description, OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+    summarise(TotalCollisions = n_distinct(DRKey)) %>%
+    ggplot(aes(x=OccurredDate, y=TotalCollisions, color=Description)) +
+    geom_line()
+)
+
+print(
+  collision_mo_codes_pre_post_covid %>%
+    ggplot(aes(x=ChangeInProportion, y=Description, fill=Description)) +
+    geom_bar(stat='identity') +
+    scale_x_continuous(label=scales::percent) +
+    theme_set(theme_gray(base_size = 8)) +
+    theme(legend.position='none') +
+    labs(y='', x='Change in Proportion') +
+    ggtitle('Shift in Proportion of Collisions Labelled, Pre- and Post-COVID')
+)
+
+```
+
+## Proportion of collisions w/ conflicting MO codes over time
+```{r}
+collision_mo_codes_labeled %>%
+  group_by(MOCode, Description) %>%
+  summarise(TotalCollisions = n_distinct(DRKey)) %>%
+  arrange(desc(MOCode))
+
+print(
+  collisions_mo_code_conflicts %>% 
+    group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>%
+    summarise(ConflictingCodeRate = mean(ConflictingMOCodes, na.rm=TRUE)) %>%
+    ggplot(aes(x=OccurredDate, y=ConflictingCodeRate)) +
+    geom_line() +
+    scale_y_continuous(label=scales::percent)
+)
+```
+
+```{r}
+# histogram
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    ggplot(aes(x=CollisionAtIntersection, fill=CollisionAtIntersection)) +
+    geom_histogram(stat='count') +
+    ggtitle('Number of Collisions at Intersection in 2024')
+)
+
+# scatterplots
+rounding_factor <- 1000
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor)) %>%
+    summarise(Collisions = n(),
+              ProportionAtIntersection = mean(AtIntersection)) %>%
+    ggplot(aes(x=ProportionAtIntersection, y=Collisions)) +
+    geom_point() +
+    ggtitle('Number of Collisions at Locations by Proportion at Intersection, 2024')
+)
+
+rounding_factor <- 1000
+print(
+  collisions_with_injury_type %>% 
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor),
+             CollisionAtIntersection) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=Collisions, fill=CollisionAtIntersection)) +
+    geom_histogram(stat='count') +
+    facet_wrap(~CollisionAtIntersection) +
+    ggtitle('Histogram of Number of Collisions at Intersection in 2024')
+)
+
+# map
+rounding_factor <- 100
+print(
+  collisions_with_injury_type %>%
+    filter(year(OccurredDate) == 2024,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
+             RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor)) %>%
+    summarise(Collisions = n(),
+              ProportionAtIntersection = mean(AtIntersection)) %>%
+    arrange(desc(Collisions)) %>%
+    ggplot(aes(x=RoundedLon, y=RoundedLat, color=ProportionAtIntersection,
+               size=Collisions)) +
+    geom_point() +
+    ggtitle('Number of Collisions at Location by Proportion At Intersection, 2024')
+)
+
+# bar chart of injury severity by intersection vs non-intersection
+print(
+  collisions_with_injury_type %>%
+    filter(year(OccurredDate) == 2024) %>%
+    group_by(RoundedLat = round(Latitude, 3), 
+             RoundedLon = round(Longitude, 3)) %>%
+    mutate(NumCollisionsAtIntersection = sum(as.numeric(AtIntersection)),
+           NumCollisionsNotAtIntersection = sum(as.numeric(NotAtIntersection))) %>%
+    ungroup() %>%
+    filter(NumCollisionsAtIntersection >= 5 |
+           NumCollisionsNotAtIntersection >= 1) %>%
+    group_by(CollisionAtIntersection, MostSevereInjuryReported) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=MostSevereInjuryReported, y=Collisions, fill=CollisionAtIntersection)) +
+    geom_bar(stat='identity') +
+    facet_wrap(~CollisionAtIntersection) +
+    ggtitle('Number of Collision Injuries by Severity, Intersection vs Non-Intersection, 2024')
+)
+```
+
+## Second round - more directed, hopefully more fruitful
+```{r}
+# looking to see whether intersections in general are more "dangerous" than non-intersections
+# in a given area with both intersection collisions and non-intersection collisions, which happen more frequently
+## i.e. what proportion of the collisions in these areas occurs at intersections
+
+# also, in those areas, are injuries more likely/severe at intersections or not
+
+# first, can we identify the right coordinates per intersection
+## Seems to be too much variance in what coordinates an address x cross street combo can be listed as, maybe by mistake
+## Should group by coordinates, and pick the nearest intersection by most common listing; round to nearest 1000th place
+collisions_with_injury_type %>% 
+  filter(AtIntersection) %>%
+  group_by(Address, CrossStreet, Latitude, Longitude) %>% 
+  summarise(Count = 1) %>%
+  group_by(Address, CrossStreet) %>% 
+  summarise(Count=n()) %>%
+  arrange(desc(Count))
+
+# 33.942, -118.4095 is a problematic set of coordinates; it's LAX and encompasses a ton of nearby locations
+# There are some other coordinates that seem wrong
+collisions_with_injury_type %>%
+  mutate(NearestIntersection = paste0(Address, ' and ', CrossStreet)) %>%
+  group_by(RoundedLat = round(Latitude, 3),
+           RoundedLon = round(Longitude, 3),
+           NearestIntersection) %>%
+  summarise(Count = n()) %>%
+  group_by(RoundedLat, RoundedLon) %>%
+  summarise(Count = n()) %>% arrange(desc(Count))
+
+# trying again to round out the intersection areas by name and coordinates
+# besides a couple exceptions, it seems any location with a cross street and any collisions being listed 
+# at intersection should be labeled an intersection, 
+
+# comparing the possible outcomes
+collisions_at_intersection_areas %>%
+  group_by(ListedAsIntersection, ListedAsNotIntersection,
+           ListedMoreAsAtIntersection, HasCrossStreet) %>% 
+  summarise(Collisions = sum(Collisions))
+
+collisions_at_intersection_areas %>% 
+  filter(ListedAsIntersection == 1,
+         ListedAsNotIntersection == 1,
+         ListedMoreAsAtIntersection == 0,
+         HasCrossStreet == 0) %>% 
+  arrange(desc(Collisions))
+
+```
+
+```{r}
+# tracking the intersection labeling over time
+print(
+  collisions_with_injury_type %>% 
+    filter(OccurredDate >= '2013-01-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='weeks'),
+             CollisionAtIntersection) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=Collisions, color=CollisionAtIntersection)) +
+    geom_line()
+)
+
+# tracking the intersection labeling by location over time
+print(
+  collisions_with_injury_type %>% 
+    filter(OccurredDate >= '2013-01-01') %>%
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='weeks'),
+             RoundedLat = round(Latitude, 4),
+             RoundedLon = round(Longitude, 4)) %>%
+    summarise(
+      AtIntersection = max(AtIntersection),
+      NotAtIntersection = max(NotAtIntersection),
+    ) %>% 
+    mutate(
+      labeledAsIntersection = case_when(
+        AtIntersection == 1 & NotAtIntersection == 1 ~ 'Both',
+        AtIntersection == 1 ~ 'At Intersection',
+        NotAtIntersection == 1 ~ 'Not At Intersection',
+        TRUE ~ 'Unspecified'
+      )) %>% 
+    group_by(OccurredWeek, labeledAsIntersection) %>%
+    summarise(NumLocations = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=NumLocations, color=labeledAsIntersection)) +
+    geom_line()
+)
+```
+
+```{r}
+collisions_with_injury_type %>% 
+  filter(round(Latitude, 3) == 33.989, round(Longitude, 3) == -118.309) %>%
+  select(ReportingDistrict, AtIntersection, NotAtIntersection)
+
+collisions_with_injury_type %>% distinct(Address)
+
+collision_mo_codes %>% 
+  filter(Latitude == 33.9470, Longitude == -118.2684) %>% 
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% 
+  summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+```
+## Trying this again, without street names
+```{r}
+identifying_intersections %>% 
+  filter(HasCrossStreet == 0, ListedAsIntersection == 1) %>%
+  arrange(desc(Collisions))
+
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0) %>%
+  arrange(desc(Collisions))
+
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0) %>%
+  arrange(desc(NumCollisionsNotAtIntersection))
+
+# Basically, if the coordinates are ever listed with a CrossStreet, they are at an intersection
+```
+
+## Double-checking that I've re-labeled intersections correctly
+```{r}
+identifying_intersections %>% 
+  filter(HasCrossStreet == 1, ListedAsIntersection == 0, ListedAsNotIntersection == 1) %>%
+  arrange(desc(NumCollisionsNotAtIntersection))
+# Far as I can tell, the vast majority of coordinates listed with CrossStreets point to intersections
+```
+
+```{r}
+# Check the MO Codes of one of these re-labeled intersections that looks iffy
+collision_mo_codes %>% 
+  filter(!is.na(MOCode), Latitude == 34.1589, Longitude ==	-118.4994) %>%
+  left_join(mo_code_descriptions, by='MOCode') %>%
+  group_by(MOCode, Description) %>% summarise(Collisions = n_distinct(DRKey)) %>% 
+  arrange(desc(Collisions))
+```
+
+# Validating Data for File 5. Demographic Trends
+# Parsing ZIP Codes
+```{r}
+print(
+  zip_codes_indexed %>%
+    ggplot(aes(x=DistanceToNext)) +
+    geom_histogram(binwidth = 0.001)
+)
+
+zip_codes_indexed %>% arrange(desc(DistanceToNext))
+zip_codes_indexed %>% group_by(DistanceToNext = round(DistanceToNext, 4)) %>%
+  summarise(Count = n()) %>% arrange(desc(DistanceToNext))
+```
+
+## Labeling the collision coordinates ZIP codes using a Latitude-wise method
+```{r}
+for (zip_code in relevant_zip_codes) {
+  print(
+    all_coordinates %>% filter(ZIPCode == local(zip_code),
+                               Backfilled == Frontfilled | CoordinateType == 'Boundary'
+                               ) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=CoordinateType)) +
+      geom_point(size=1) +
+      ggtitle(local(zip_code))
+  )
+}
+```
+
+Looking at coordinates with conflicting ZIP code labels, the vast majority of these are along boundaries and could reasonably be attributed to either ZIP code. ZIP code 91330 lies within another ZIP code, so the method used gives conflicting results for coordinates well outside its bounds; this has been fixed above
+```{r}
+for (i in c(1:nrow(conflicted_coordinates))) {
+  print(
+    all_coordinates %>% 
+      filter(ZIPCode %in% c(conflicted_coordinates[i, 'Backfilled'],
+                            conflicted_coordinates[i, 'Frontfilled'])) %>%
+      mutate(IsConflicted = ifelse(Backfilled == conflicted_coordinates[i, 'Backfilled'][[1]] &
+                                   Frontfilled == conflicted_coordinates[i, 'Frontfilled'][[1]] &
+                                   CoordinateType == 'Collision', 1, 0)) %>%
+      arrange(IsConflicted) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=as.factor(IsConflicted))) +
+      geom_point(size=1) +
+      ggtitle(local(zip_code))
+  )
+}
+```
+
+
+```{r}
+census_by_zip %>% group_by(LabelGroup1, LabelGroup2, LabelGroup3) %>% summarise(n())
+```

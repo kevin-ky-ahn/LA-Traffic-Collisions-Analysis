@@ -1,11 +1,11 @@
 ---
-title: "Traffic Collisions Location Analysis"
+title: "Traffic Collisions Data Cleaning"
 output: html_document
-date: "2026-04-24"
+date: "2026-01-16"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 library(dplyr)
 library(tidyverse)
@@ -15,10 +15,10 @@ library(jsonlite)
 library(readxl)
 library(forecast)
 library(tseries)
-library(Morpho)
-options(dplyr.summarise.inform = FALSE)
-options(ggplot2.stat_bin.inform = FALSE)
 ```
+
+# Data for File 5. Demographic Trends
+This script is intended to clean some of the raw data collected from the US Census Bureau. As these transformations can take a long time to run, this script is separated from the rest of the data transformations (located in file 2. Data Transformations), and the outputs here are saved to their own CSVs. This script should not have to be run more than once.
 
 # Census data
 ```{r}
@@ -62,81 +62,6 @@ for (year in c(2013:2024)) {census_data <- rbind(census_data, parse_census_data(
 census_data %>% write.csv('Cleaned Data/LACensusDataOverall.csv', row.names=FALSE)
 ```
 
-## Age trends over time
-```{r}
-print(
-  census_data %>%
-    filter(DemographicType == 'Age') %>%
-    ggplot(aes(x=Year, y=Population, color=Demographic)) +
-    geom_line() +
-    theme_set(theme_gray(base_size = 11)) +
-    labs(color='Age Group')
-)
-
-print(
-  census_data %>%
-    filter(DemographicType == 'Age') %>%
-    mutate(Proportion = Population/Total) %>%
-    ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
-    geom_line() +
-    theme_set(theme_gray(base_size = 11)) +
-    labs(color='Age Group') +
-    scale_y_continuous(labels=scales::percent)
-)
-```
-
-## Breakdown of collisions by race/ethnicity
-```{r, fig.height=4, fig.width=6}
-for (race in c('Asian', 'Black American', 'Hispanic/Latino', 'White')) {
-  print(
-    collisions_with_labeled_intersections %>%
-      filter(Latitude != 0, Longitude != 0, VictimEthnicity == local(race)) %>%
-      group_by(Latitude = round(Latitude, 3), Longitude = round(Longitude, 3), VictimEthnicity) %>%
-      summarise(Collisions = n()) %>%
-      arrange(Collisions) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=Collisions)) +
-      geom_point() +
-      xlim(-118.7, -118.1) +
-      ylim(33.6, 34.4) +
-      facet_wrap(~VictimEthnicity)
-  )
-}
-```
-
-## Collision rates over time
-```{r}
-print(
-  census_data %>%
-    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
-    left_join(
-      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
-      by = c('Year' = 'OccurredYear')
-    ) %>%
-    mutate(CollisionRate = Collisions/TotalPopulation) %>%
-    ggplot(aes(x=Year, y=CollisionRate)) +
-    geom_line() +
-    scale_y_continuous(labels=scales::percent, limits=c(0, NA))
-)
-
-print(
-  census_data %>%
-    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
-    left_join(
-      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
-      by = c('Year' = 'OccurredYear')
-    ) %>%
-    left_join(commuting_data_overall, by='Year') %>%
-    mutate(CollisionRate = Collisions/TotalPopulation,
-           CarCommutersByPopulation = (Driving + Carpooling)/TotalPopulation
-           ) %>%
-    ggplot(aes(x=CarCommutersByPopulation, y=CollisionRate, color=as.factor(Year))) +
-    geom_point() +
-    scale_y_continuous(labels=scales::percent, limits=c(0, NA)) +
-    scale_x_continuous(labels=scales::percent) +
-    labs(x='Number of Car Commuters per Population', y='Collisions per Population', color='Year')
-)
-```
-
 # Commutes over Time
 ## Loading and cleaning data
 ```{r}
@@ -164,7 +89,6 @@ pivot_commuting_overall <- function(year) {
   
   return(commuting_overall)
 }
-
 
 pivot_commuting_data_by_ethn <- function(year, file_subname, race_ethnicity_label) {
   
@@ -209,191 +133,33 @@ commuting_data_overall %>% write.csv('Cleaned Data/LACommutingDataOverall.csv', 
 commuting_data_by_ethnicity %>% write.csv('Cleaned Data/LACommutingDataByEthnicity.csv', row.names=FALSE)
 ```
 
-```{r}
-commuting_data_overall <- read.csv('Cleaned Data/LACommutingDataOverall.csv')
-commuting_data_by_ethnicity <- read.csv('Cleaned Data/LACommutingDataByEthnicity.csv')
-```
-
-## Commuting trends over time
-```{r}
-# Proportion of each mode of transportation over time
-print(
-  commuting_data_overall %>%
-    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
-                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
-                 names_to='ModeOfTransportation', values_to='Values') %>%
-    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
-    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
-    geom_line() +
-    theme_set(theme_gray(base_size = 11)) +
-    labs(color='Mode of Transportation') +
-    scale_y_continuous(labels=scales::percent)
-)
-
-print(
-  commuting_data_by_ethnicity %>%
-    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
-                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
-                 names_to='ModeOfTransportation', values_to='Values') %>%
-    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
-    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
-    geom_line() +
-    facet_wrap(~RaceEthnicity) +
-    theme_set(theme_gray(base_size = 11)) +
-    labs(color='Mode of Transportation') +
-    scale_y_continuous(labels=scales::percent)
-)
-```
-
-## Commuting shifts after COVID
-```{r}
-commuting_by_covid_period <- commuting_data_by_ethnicity %>%
-  filter(Year >= 2016, Year != 2020) %>%
-  mutate(Period = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID') %>%
-           factor(levels = c('Pre-COVID', 'Post-COVID'))) %>%
-  group_by(Period, RaceEthnicity) %>%
-  summarise(
-    AvgWorkersPerYear = mean(TotalWorkers) %>% round(),
-    AvgCommutingByCar = mean(Driving + Carpooling) %>% round(),
-    AvgCommutingByPublicTransit = mean(PublicTransit) %>% round(),
-    AvgCommutingByWalking = mean(Walking) %>% round(),
-    AvgCommutingByTaxiBikeAndOther = mean(TaxiBikeAndOther) %>% round(),
-    AvgWorkFromHome = mean(WorkingFromHome) %>% round(),
-    
-    CommutingByCarRate = round(AvgCommutingByCar/AvgWorkersPerYear, 2),
-    CommutingByPublicTransitRate = round(AvgCommutingByPublicTransit/AvgWorkersPerYear, 2),
-    CommutingByWalkingRate = round(AvgCommutingByWalking/AvgWorkersPerYear, 2),
-    CommutingByTaxiBikeAndOtherRate = round(AvgCommutingByTaxiBikeAndOther/AvgWorkersPerYear, 2),
-    WFHRate = round(AvgWorkFromHome/AvgWorkersPerYear, 2),
-  )
-
-print(
-  commuting_by_covid_period %>%
-    ggplot(aes(x=RaceEthnicity, y=CommutingByCarRate, fill=Period)) +
-    geom_bar(stat='identity', position='dodge') +
-    scale_y_continuous(labels=scales::percent) +
-    labs(x='Race/Ethnicity', y='Commuting by Car Rate', fill='') +
-    ggtitle('Proportion of Workers Commuting by Car, Pre- and Post-COVID')
-)
-
-print(
-  commuting_by_covid_period %>%
-    ggplot(aes(x=RaceEthnicity, y=WFHRate, fill=Period)) +
-    geom_bar(stat='identity', position='dodge') +
-    scale_y_continuous(labels=scales::percent) +
-    labs(x='Race/Ethnicity', y='Working from Home Rate', fill='') +
-    ggtitle('Proportion of Workers Working from Home, Pre- and Post-COVID')
-)
-```
-
-## Comparing number of collision victims by ethnicity, compared to WFH rate
-Too correlated w/ decrease in collisions after COVID
-```{r}
-collisions_by_ethnicity <- collisions_with_labeled_intersections %>%
-  mutate(
-    VictimEthnicity = case_when(
-      VictimDescent == 'H' ~ 'Hispanic',
-      VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
-      VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
-      VictimDescent == 'B' ~ 'Black',
-      VictimDescent == 'W' ~ 'White',
-      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
-      VictimDescent == 'I' ~ 'Native American/Alaskan',
-      TRUE ~ '?'    )
-  ) %>%
-  group_by(OccurredYear, VictimEthnicity) %>%
-  summarise(Collisions = n()) %>%
-  right_join(commuting_data_by_ethnicity, 
-             by=c('VictimEthnicity'='RaceEthnicity', 'OccurredYear'='Year')) %>%
-  right_join(census_data %>% filter(DemographicType == 'RaceEthnicity'),
-             by=c('VictimEthnicity'='Demographic', 'OccurredYear'='Year')) %>%
-  mutate(
-    Car = Driving + Carpooling,
-    DrivingProportion = Car/TotalWorkers,
-    WalkingProportion = Walking/TotalWorkers,
-    PublicTransitProportion = PublicTransit/TotalWorkers,
-    WFHProportion = WorkingFromHome/TotalWorkers,
-    CollisionRate = Collisions/Population)
-```
-
-```{r}
-print(
-  collisions_by_ethnicity %>% 
-    filter(VictimEthnicity != 'Other', 
-           VictimEthnicity != 'Two or More Races',
-           OccurredYear != 2020) %>%
-    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
-    ggplot(aes(x=DrivingProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
-    geom_point(size=3) +
-    scale_x_continuous(labels=scales::percent) +
-    scale_y_continuous(labels=scales::percent) +
-    ggtitle('Proportion of Workers Driving to Work vs Collision Rate of Population', 
-            subtitle='By Ethnicity')
-)
-
-print(
-  collisions_by_ethnicity %>% 
-    filter(VictimEthnicity != 'Other', 
-           VictimEthnicity != 'Two or More Races',
-           OccurredYear != 2020) %>%
-    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
-    ggplot(aes(x=WFHProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
-    geom_point(size=3) +
-    scale_x_continuous(labels=scales::percent) +
-    scale_y_continuous(labels=scales::percent) +
-    ggtitle('Proportion of Workers Working from Home vs Collision Rate of Population', 
-            subtitle='By Ethnicity')
-)
-```
-
-## Distributions of collision time over the years
-```{r}
-print(
-  collisions_with_labeled_intersections %>%
-    filter(!is.na(OccurredTime), OccurredYear >= 2016, 
-           OccurredYear < 2025, OccurredYear != 2020) %>%
-    mutate(Period = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID'),) %>%
-    group_by(Period) %>% mutate(Total = n()) %>% ungroup() %>%
-    group_by(OccurredTime = round(OccurredTime, -2), Period) %>%
-    summarise(Distribution = n()/first(Total)) %>%
-    ggplot(aes(x=OccurredTime, y=Distribution, color=Period)) +
-    geom_line() +
-    scale_y_continuous(labels=scales::percent) +
-    ggtitle('Distribution of Collision Occurrence Time, Pre- and Post-COVID')
-)
-```
-
 # Parsing ZIP Codes
 ```{r}
 zip_code_boundaries <- read_json('Data/ZIP Codes/Zipcodes.geojson')
 
-# zip_codes_df <- data.frame()
+zip_codes_df <- data.frame()
 
-# for (i in c(1:length(zip_code_boundaries$features))) {
-#   row <- zip_code_boundaries$features[[i]]
-# 
-#   object_id <- row$properties$OBJECTID
-#   zip_code <- row$properties$ZIPCODE
-#   shape_type <- row$geometry$type
-# 
-#   if (shape_type == 'Polygon') {
-#     coordinates <- row$geometry$coordinates[[1]]
-#   } else {
-#     coordinates <- row$geometry$coordinates[[1]][[1]]
-#   }
-#   for (coord_set in coordinates) {
-#     zip_codes_df <- rbind(zip_codes_df,
-#                           list('ObjectID'=object_id, 'ZIPCode'=zip_code,
-#                                'Longitude'=coord_set[[1]],
-#                                'Latitude'=coord_set[[2]]))
-#   }
-# }
-# 
-# zip_codes_df <- zip_codes_df %>% distinct()
-# zip_codes_df %>% group_by(ObjectID) %>% summarise(n())
+for (i in c(1:length(zip_code_boundaries$features))) {
+  row <- zip_code_boundaries$features[[i]]
 
-# zip_codes_df %>% write.csv('Cleaned Data/LAZipCodes.csv', row.names=FALSE)
-zip_codes_df <- read.csv('Cleaned Data/LAZipCodes.csv')
+  object_id <- row$properties$OBJECTID
+  zip_code <- row$properties$ZIPCODE
+  shape_type <- row$geometry$type
+
+  if (shape_type == 'Polygon') {
+    coordinates <- row$geometry$coordinates[[1]]
+  } else {
+    coordinates <- row$geometry$coordinates[[1]][[1]]
+  }
+  for (coord_set in coordinates) {
+    zip_codes_df <- rbind(zip_codes_df,
+                          list('ObjectID'=object_id, 'ZIPCode'=zip_code,
+                               'Longitude'=coord_set[[1]],
+                               'Latitude'=coord_set[[2]]))
+  }
+}
+
+zip_codes_df <- zip_codes_df %>% distinct()
 ```
 
 ## Interpolating the ZIP code boundary coordinates
@@ -408,18 +174,6 @@ zip_codes_indexed <- zip_codes_df %>%
                                           NextLatitude = Latitude, NextLongitude = Longitude) %>% 
                                    select(ZIPCode, Index, NextLatitude, NextLongitude), by=c('ZIPCode', 'Index'))) %>%
   mutate(DistanceToNext = sqrt((NextLatitude - Latitude)**2  + (NextLongitude - Longitude)**2))
-```
-
-```{r}
-print(
-  zip_codes_indexed %>%
-    ggplot(aes(x=DistanceToNext)) +
-    geom_histogram(binwidth = 0.001)
-)
-
-zip_codes_indexed %>% arrange(desc(DistanceToNext))
-zip_codes_indexed %>% group_by(DistanceToNext = round(DistanceToNext, 4)) %>%
-  summarise(Count = n()) %>% arrange(desc(DistanceToNext))
 ```
 
 ```{r}
@@ -440,7 +194,6 @@ interpolate_coordinates <- function(distance_to_next, boundary_latitude, boundar
     return(paste(new_latitudes, new_longitudes, sep=';'))
   }
 
-start_time <- Sys.time()
 interpolation_distance <- 0.00005
 
 zip_codes_interpolated <- zip_codes_indexed %>%
@@ -475,96 +228,13 @@ zip_codes_reindexed <- zip_codes_interpolated %>%
                                    select(ZIPCode, Index, NextLatitude, NextLongitude), by=c('ZIPCode', 'Index'))) %>%
   mutate(DistanceToNext = sqrt((NextLatitude - Latitude)**2  + (NextLongitude - Longitude)**2 ))
 
-print(Sys.time() - start_time)
-
 zip_codes_reindexed %>% filter(DistanceToNext > 0.0001) # 0.0001414214
 zip_codes_reindexed %>% mutate(LatitudeDiff = NextLatitude - Latitude) %>% filter(LatitudeDiff > 0.0001)
 zip_codes_reindexed %>% mutate(LongitudeDiff = NextLongitude - Longitude) %>% filter(LongitudeDiff > 0.0001)
 
 # zip_codes_reindexed %>% write.csv('Cleaned Data/LAZipCodesInterpolated.csv', row.names=FALSE)
-# zip_codes_reindexed <- read.csv('Cleaned Data/LAZipCodesInterpolated.csv')
 ```
 
-## Labeling the collision coordinates ZIP codes using a Latitude-wise method
-```{r}
-all_coordinates <- zip_codes_reindexed %>% mutate(CoordinateType = 'Boundary') %>%
-  mutate(Latitude = round(Latitude, 4), Longitude = round(Longitude, 4),
-         LateralDirection = case_when(
-           NextLatitude > Latitude ~ 1,
-           NextLatitude < Latitude ~ -1,
-           TRUE ~ 0),
-         Longitude = case_when(
-           LateralDirection == 1 ~ Longitude - 0.00009,
-           LateralDirection == -1 ~ Longitude + 0.00009,
-           TRUE ~ Longitude)) %>%
-  select(Latitude, Longitude, ZIPCode, CoordinateType) %>%
-  rbind(collisions_with_labeled_intersections %>% 
-          filter(Latitude != 0, Longitude != 0) %>% 
-          mutate(ZIPCode = NA, CoordinateType = 'Collision') %>% 
-          select(Latitude, Longitude, ZIPCode, CoordinateType) %>% distinct()) %>%
-  arrange(Latitude, Longitude, ZIPCode) %>%
-  mutate(IsCollisionPoint = ifelse(CoordinateType == 'Collision', 1, 0)) %>%
-  group_by(Latitude, ZIPCode) %>%
-  mutate(MinLongitude = min(Longitude), MaxLongitude = max(Longitude)) %>% ungroup() %>%
-  mutate(Backfilled = case_when(CoordinateType == 'Collision' ~ 0, 
-                                Longitude == MaxLongitude ~ NA, TRUE ~ ZIPCode),
-         Frontfilled = case_when(CoordinateType == 'Collision' ~ 0,
-                                 Longitude == MinLongitude ~ NA, TRUE ~ ZIPCode),) %>%
-  fill(Backfilled, .direction='up') %>%
-  fill(Frontfilled, .direction='down') %>%
-  mutate(
-    Backfilled = ifelse(Backfilled == 0, NA, Backfilled),
-    Frontfilled = ifelse(Frontfilled == 0, NA, Frontfilled),
-  )  %>%
-  fill(Backfilled, .direction='down') %>%
-  fill(Frontfilled, .direction='up') %>%
-  mutate(ZIPCode = ifelse(CoordinateType == 'Collision', 
-                          case_when(
-                            Backfilled == 91330 ~ Frontfilled,
-                            TRUE ~ Backfilled), ZIPCode))
-```
-
-```{r}
-relevant_zip_codes <- (all_coordinates %>% group_by(ZIPCode) %>% 
-  summarise(NumCollisionPoints = sum(IsCollisionPoint)) %>%
-  filter(NumCollisionPoints > 0) %>% ungroup() %>%
-  select(ZIPCode))$ZIPCode
-
-for (zip_code in relevant_zip_codes) {
-  print(
-    all_coordinates %>% filter(ZIPCode == local(zip_code),
-                               Backfilled == Frontfilled | CoordinateType == 'Boundary'
-                               ) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=CoordinateType)) +
-      geom_point(size=1) +
-      ggtitle(local(zip_code))
-  )
-}
-```
-
-Looking at coordinates with conflicting ZIP code labels, the vast majority of these are along boundaries and could reasonably be attributed to either ZIP code. ZIP code 91330 lies within another ZIP code, so the method used gives conflicting results for coordinates well outside its bounds; this has been fixed above
-```{r}
-conflicted_coordinates <- all_coordinates %>%
-  filter(CoordinateType == 'Collision',
-         Backfilled != Frontfilled) %>%
-  group_by(Backfilled, Frontfilled) %>% 
-  summarise(1)
-
-for (i in c(1:nrow(conflicted_coordinates))) {
-  print(
-    all_coordinates %>% 
-      filter(ZIPCode %in% c(conflicted_coordinates[i, 'Backfilled'],
-                            conflicted_coordinates[i, 'Frontfilled'])) %>%
-      mutate(IsConflicted = ifelse(Backfilled == conflicted_coordinates[i, 'Backfilled'][[1]] &
-                                   Frontfilled == conflicted_coordinates[i, 'Frontfilled'][[1]] &
-                                   CoordinateType == 'Collision', 1, 0)) %>%
-      arrange(IsConflicted) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=as.factor(IsConflicted))) +
-      geom_point(size=1) +
-      ggtitle(local(zip_code))
-  )
-}
-```
 
 # Breaking Down Demographics by ZIP Code
 I used (all_coordinates %>% filter(CoordinateType == 'Collision') %>% select(ZIPCode) %>% distinct() %>% arrange(ZIPCode))$ZIPCode to list all the relevant ZIP codes and collected the overall census and commuter data for 2013-2024 for these ZIP codes. Each CSV contains the data for 20-40 of the ZIP codes due to filesize limits
@@ -612,10 +282,10 @@ for (filename in census_filenames) {
       mutate_at(vars(LabelGroup1, LabelGroup2, LabelGroup3, LabelGroup4, LabelGroup5), ~toupper(.)) %>%
       fill(LabelGroup1, LabelGroup2, LabelGroup3, LabelGroup4) %>%
       mutate(
-        LabelGroup1 = ifelse(LabelGroup1 == 'TOTAL POPULATION', 
+        LabelGroup1 = ifelse(LabelGroup1 == 'TOTAL POPULATION',
                              LabelGroup2, LabelGroup1),
         LabelGroup2 = case_when(
-          LabelGroup2 == 'TOTAL POPULATION' | 
+          LabelGroup2 == 'TOTAL POPULATION' |
             LabelGroup2 == LabelGroup1 ~ LabelGroup3,
           TRUE ~ LabelGroup2),
         LabelGroup3 = case_when(
@@ -638,10 +308,14 @@ label_groupings_summarised <- label_groupings %>%
   group_by(LabelGroup1, LabelGroup2, LabelGroup3, LabelGroup4, LabelGroup5) %>%
   summarise(Count= n_distinct(Year)) %>% arrange(desc(Count)) %>% ungroup() %>%
   filter(LabelGroup4 == 'NONE', LabelGroup5 == 'NONE', LabelGroup2 != 'NONE',
-         LabelGroup3 == 'NONE' | (LabelGroup1 == 'RACE' & LabelGroup2 == 'ONE RACE'),
-         LabelGroup3 != 'NONE' | (LabelGroup1 != 'RACE' & LabelGroup2 != 'ONE RACE'),
-         Count == 12, LabelGroup2 != 'NOT HISPANIC OR LATINO', LabelGroup2 != 'MEDIAN AGE (YEARS)',
+         LabelGroup3 == 'NONE' | (LabelGroup1 == 'HISPANIC OR LATINO AND RACE' & 
+                                    LabelGroup2 == 'NOT HISPANIC OR LATINO') |
+           (LabelGroup1 == 'RACE' & LabelGroup2 == 'ONE RACE'),
+         LabelGroup3 != 'NONE' | (LabelGroup1 != 'HISPANIC OR LATINO AND RACE' & LabelGroup1 != 'RACE') |
+           (LabelGroup2 != 'NOT HISPANIC OR LATINO' & LabelGroup2 != 'ONE RACE'),
+         Count == 12, LabelGroup2 != 'MEDIAN AGE (YEARS)',
          !(grepl('YEARS AND OVER', LabelGroup2)) | LabelGroup2 == '85 YEARS AND OVER',
+         LabelGroup2 != 'TOTAL POPULATION',
          ) %>% select(LabelGroup1, LabelGroup2, LabelGroup3)
 ```
 
@@ -683,27 +357,29 @@ parse_census_data_by_zip_code <- function(filename) {
     select(-`Label..Grouping.`, -LabelGroup4, -LabelGroup5) %>%
     select(Year, LabelGroup1, LabelGroup2, LabelGroup3, everything()) %>% 
     pivot_longer(cols=starts_with('ZCTA'), names_to = 'ZIP', values_to = 'Population', values_transform = as.character) %>%
-    filter(grepl('..Estimate', ZIP)) %>%
-    mutate(ZIP = substring(ZIP, 7, 11),
-           Population = str_remove(Population, ',') %>% as.numeric()) %>%
-    inner_join(label_groupings_summarised, by=c('LabelGroup1', 'LabelGroup2', 'LabelGroup3'))
+    filter(grepl('..Estimate', ZIP))
   
   return(census_data_by_zip)
 }
 ```
 
 ```{r}
-census_by_zip <- data.frame()
+census_by_zip_raw <- data.frame()
 
 for (filename in census_filenames) {
-  census_by_zip <- rbind(census_by_zip, parse_census_data_by_zip_code(filename))
+  census_by_zip_raw <- rbind(census_by_zip_raw, parse_census_data_by_zip_code(filename))
 }
+
+census_by_zip <- census_by_zip_raw %>%
+    mutate(ZIP = substring(ZIP, 7, 11),
+           Population = str_remove(Population, ',') %>% as.numeric()) %>%
+    inner_join(label_groupings_summarised, by=c('LabelGroup1', 'LabelGroup2', 'LabelGroup3'))
 
 # checking the completeness of the data; ZIP code 90090 is missing data for 2021-2024, but these years are simply not available in the census data
 for (year in c(2013:2024)) {
   census_by_zip %>% 
     # group_by(ZIP) %>% summarise(Count = n()) %>% arrange(desc(Count))
-    group_by(ZIP) %>% mutate(Count = n()) %>% filter(Count < 264, Year == local(year)) %>% ungroup() %>%
+    group_by(ZIP) %>% mutate(Count = n()) %>% filter(Count < 372, Year == local(year)) %>% ungroup() %>%
     arrange(ZIP, LabelGroup1, LabelGroup2, LabelGroup3) %>%
     print()
 }
@@ -711,30 +387,9 @@ for (year in c(2013:2024)) {
 census_by_zip %>% write.csv('Cleaned Data/LACensusDataByZIP.csv', row.names=FALSE)
 ```
 
-```{r}
-census_by_zip <- read.csv('Cleaned Data/LACensusDataByZIP.csv')
-census_by_zip %>% group_by(LabelGroup1, LabelGroup2, LabelGroup3) %>% summarise(n())
-
-census_by_zip_pivoted <- census_by_zip %>%
-  mutate(LabelGroup = case_when(
-      LabelGroup1 == 'RACE' & LabelGroup2 == 'ONE RACE' ~ case_when(
-        LabelGroup3 == 'BLACK OR AFRICAN AMERICAN' ~ 'BLACK',
-        LabelGroup3 == 'AMERICAN INDIAN AND ALASKA NATIVE' ~ 'INDIGENOUS',
-        LabelGroup3 == 'NATIVE HAWAIIAN AND OTHER PACIFIC ISLANDER' ~ 'PACIFIC ISLANDER',
-        LabelGroup3 == 'SOME OTHER RACE' ~ 'OTHER',
-        TRUE ~ LabelGroup3),
-      LabelGroup1 == 'HISPANIC OR LATINO AND RACE' ~ 'HISPANIC',
-      TRUE ~ LabelGroup2) %>% str_to_title() %>% 
-        str_replace_all(' To ', ' to ') %>% str_replace_all(' And ', ' and ') %>%
-        str_replace_all(' ', '')
-  ) %>% select(Year, ZIP, LabelGroup, Population) %>%
-  pivot_wider(names_from=LabelGroup, values_from=Population)
-```
-
 ## Parsing commuting data
 ```{r}
 label_groupings <- data.frame()
-filename <- "ACSDT5Y2013.B08301-2026-07-28T222015.csv"
 
 for (filename in commuter_filenames) {
   year_of_data <- filename %>% substring(8, 11) %>% as.numeric()
@@ -810,63 +465,3 @@ for (year in c(2013:2024)) {
 
 commuting_by_zip %>% write.csv('Cleaned Data/LACommutingDataByZIP.csv', row.names=FALSE)
 ```
-
-```{r}
-commuting_by_zip <- read.csv('Cleaned Data/LACommutingDataByZIP.csv')
-
-commuting_by_zip_pivoted <- commuting_by_zip %>%
-  mutate(LabelGroup = case_when(
-    LabelGroup3 == 'DROVE ALONE' ~ 'Driving',
-    LabelGroup3 == 'CARPOOLED' ~ 'Carpooling',
-    LabelGroup2 %in% c('PUBLIC TRANSPORTATION (EXCLUDING TAXICAB)',
-                       'PUBLIC TRANSPORTATION') ~ 'PublicTransit',
-    LabelGroup2 == 'WALKED' ~ 'Walking',
-    LabelGroup2 %in% c('WORKED AT HOME', 'WORKED FROM HOME') ~ 'WorkingFromHome',
-    LabelGroup2 %in% c('BICYCLE', 'MOTORCYCLE', 'TAXICAB', 
-                       'TAXI OR RIDE-HAILING SERVICES', 'OTHER MEANS') ~ 'TaxiBikeAndOther'
-  )) %>% 
-  filter(!is.na(LabelGroup)) %>%
-  select(Year, ZIP, LabelGroup, Population) %>%
-  group_by(Year, ZIP, LabelGroup) %>% summarise(Population = sum(Population)) %>% 
-  pivot_wider(names_from=LabelGroup, values_from=Population)
-```
-
-## Observing the census and commuter data
-```{r}
-colnames(census_by_zip_pivoted)
-
-# sex
-print(
-  census_by_zip %>%
-    filter(LabelGroup1 == 'SEX AND AGE', LabelGroup2 %in% c('MALE', 'FEMALE')) %>%
-    group_by(Sex = LabelGroup2, Year) %>%
-    summarise(Population = sum(Population, na.rm=TRUE)) %>%
-    ggplot(aes(x=Year, y=Population, color=Sex)) +
-    geom_line() +
-    ylim(0, NA))
-
-# age
-
-# race/ethnicity
-```
-
-## Comparing the census and commuter data to collisions data
-```{r}
-set.seed(55)
-
-zip_codes_all_metrics <- collisions_with_labeled_intersections %>%
-  rename(Year = OccurredYear) %>%
-  left_join(
-    all_coordinates %>%
-      filter(CoordinateType == 'Collision') %>%
-      rowwise() %>%
-      mutate(ZIPCode = ifelse(Backfilled != Frontfilled, 
-                              sample(c(Backfilled, Frontfilled), 1), Backfilled)) %>%
-      select(Latitude, Longitude, ZIPCode), by=c('Latitude', 'Longitude')) %>%
-  left_join(census_by_zip_pivoted %>% rename(ZIPCode = ZIP), by=c('ZIPCode', 'Year')) %>%
-  left_join(commuting_by_zip_pivoted %>% rename(ZIPCode = ZIP), by=c('ZIPCode', 'Year'))
-```
-
-
-
-

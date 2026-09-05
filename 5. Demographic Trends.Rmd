@@ -1,0 +1,339 @@
+---
+title: "Traffic Collisions Location Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+library(Morpho)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Census Data
+## Age trends over time
+```{r}
+print(
+  census_data %>%
+    filter(DemographicType == 'Age') %>%
+    ggplot(aes(x=Year, y=Population, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Age Group')
+)
+
+print(
+  census_data %>%
+    filter(DemographicType == 'Age') %>%
+    mutate(Proportion = Population/Total) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Age Group') +
+    scale_y_continuous(labels=scales::percent)
+)
+```
+
+## Breakdown of collisions by race/ethnicity
+```{r, fig.height=4, fig.width=6}
+for (race in c('Asian', 'Black American', 'Hispanic/Latino', 'White')) {
+  print(
+    collisions_with_labeled_intersections %>%
+      filter(Latitude != 0, Longitude != 0, VictimEthnicity == local(race)) %>%
+      group_by(Latitude = round(Latitude, 3), Longitude = round(Longitude, 3), VictimEthnicity) %>%
+      summarise(Collisions = n()) %>%
+      arrange(Collisions) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Collisions)) +
+      geom_point() +
+      xlim(-118.7, -118.1) +
+      ylim(33.6, 34.4) +
+      facet_wrap(~VictimEthnicity)
+  )
+}
+```
+
+## Collision rates over time
+```{r}
+print(
+  census_data %>%
+    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
+    left_join(
+      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      by = c('Year' = 'OccurredYear')
+    ) %>%
+    mutate(CollisionRate = Collisions/TotalPopulation) %>%
+    ggplot(aes(x=Year, y=CollisionRate)) +
+    geom_line() +
+    scale_y_continuous(labels=scales::percent, limits=c(0, NA))
+)
+
+print(
+  census_data %>%
+    group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
+    left_join(
+      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      by = c('Year' = 'OccurredYear')
+    ) %>%
+    left_join(commuting_data_overall, by='Year') %>%
+    mutate(CollisionRate = Collisions/TotalPopulation,
+           CarCommutersByPopulation = (Driving + Carpooling)/TotalPopulation
+           ) %>%
+    ggplot(aes(x=CarCommutersByPopulation, y=CollisionRate, color=as.factor(Year))) +
+    geom_point() +
+    scale_y_continuous(labels=scales::percent, limits=c(0, NA)) +
+    scale_x_continuous(labels=scales::percent) +
+    labs(x='Number of Car Commuters per Population', y='Collisions per Population', color='Year')
+)
+```
+
+# Commutes over Time
+## Commuting trends over time
+```{r}
+# Proportion of each mode of transportation over time
+print(
+  commuting_data_overall %>%
+    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
+                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
+                 names_to='ModeOfTransportation', values_to='Values') %>%
+    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+
+print(
+  commuting_data_by_ethnicity %>%
+    pivot_longer(cols=c('Driving', 'Carpooling', 'PublicTransit', 
+                        'Walking', 'TaxiBikeAndOther', 'WorkingFromHome'), 
+                 names_to='ModeOfTransportation', values_to='Values') %>%
+    mutate(Proportion = round(Values/TotalWorkers, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=ModeOfTransportation)) +
+    geom_line() +
+    facet_wrap(~RaceEthnicity) +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+```
+
+## Commuting shifts after COVID
+```{r}
+print(
+  commuting_by_covid_period %>%
+    ggplot(aes(x=RaceEthnicity, y=CommutingByCarRate, fill=Period)) +
+    geom_bar(stat='identity', position='dodge') +
+    scale_y_continuous(labels=scales::percent) +
+    labs(x='Race/Ethnicity', y='Commuting by Car Rate', fill='') +
+    ggtitle('Proportion of Workers Commuting by Car, Pre- and Post-COVID')
+)
+
+print(
+  commuting_by_covid_period %>%
+    ggplot(aes(x=RaceEthnicity, y=WFHRate, fill=Period)) +
+    geom_bar(stat='identity', position='dodge') +
+    scale_y_continuous(labels=scales::percent) +
+    labs(x='Race/Ethnicity', y='Working from Home Rate', fill='') +
+    ggtitle('Proportion of Workers Working from Home, Pre- and Post-COVID')
+)
+```
+
+## Comparing number of collision victims by ethnicity, compared to WFH rate
+Too correlated w/ decrease in collisions after COVID
+```{r}
+print(
+  collisions_by_ethnicity %>% 
+    filter(VictimEthnicity != 'Other', 
+           VictimEthnicity != 'Two or More Races',
+           OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
+    ggplot(aes(x=DrivingProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
+    geom_point(size=3) +
+    scale_x_continuous(labels=scales::percent) +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Proportion of Workers Driving to Work vs Collision Rate of Population', 
+            subtitle='By Ethnicity')
+)
+
+print(
+  collisions_by_ethnicity %>% 
+    filter(VictimEthnicity != 'Other', 
+           VictimEthnicity != 'Two or More Races',
+           OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear > 2020, 'Post-COVID', 'Pre-COVID')) %>%
+    ggplot(aes(x=WFHProportion, y=CollisionRate, color=VictimEthnicity, shape=Period)) +
+    geom_point(size=3) +
+    scale_x_continuous(labels=scales::percent) +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Proportion of Workers Working from Home vs Collision Rate of Population', 
+            subtitle='By Ethnicity')
+)
+```
+
+## Distributions of collision time over the years
+```{r}
+print(
+  collisions_with_labeled_intersections %>%
+    filter(!is.na(OccurredTime), OccurredYear >= 2016, 
+           OccurredYear < 2025, OccurredYear != 2020) %>%
+    mutate(Period = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID'),) %>%
+    group_by(Period) %>% mutate(Total = n()) %>% ungroup() %>%
+    group_by(OccurredTime = round(OccurredTime, -2), Period) %>%
+    summarise(Distribution = n()/first(Total)) %>%
+    ggplot(aes(x=OccurredTime, y=Distribution, color=Period)) +
+    geom_line() +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collision Occurrence Time, Pre- and Post-COVID')
+)
+```
+
+# Breaking Down Demographics by ZIP Code
+## Observing the census and commuter data
+```{r}
+# sex
+print(
+  census_by_zip %>%
+    filter(LabelGroup1 == 'SEX AND AGE', LabelGroup2 %in% c('MALE', 'FEMALE')) %>%
+    group_by(Sex = LabelGroup2, Year) %>% summarise(Population = sum(Population, na.rm=TRUE)) %>%
+    ggplot(aes(x=Year, y=Population, color=Sex)) + geom_line() + ylim(0, NA) +
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population by Sex in Relevant LA ZIP Codes over Time'))
+
+print(
+  census_by_zip %>%
+    filter(LabelGroup1 == 'SEX AND AGE', LabelGroup2 %in% c('MALE', 'FEMALE')) %>%
+    group_by(Year) %>% mutate(TotalPopulation = sum(Population, na.rm=TRUE)) %>% ungroup() %>%
+    group_by(Sex = LabelGroup2, Year) %>% summarise(Proportion = sum(Population, na.rm=TRUE)/first(TotalPopulation)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Sex)) + geom_line() + 
+    scale_y_continuous(labels=scales::percent, limits = c(0, NA)) + 
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population Proportion by Sex in Relevant LA ZIP Codes over Time'))
+
+# age
+print(
+  census_by_zip %>%
+    filter(LabelGroup1 == 'SEX AND AGE', !(LabelGroup2 %in% c('MALE', 'FEMALE'))) %>%
+    group_by(Age = LabelGroup2, Year) %>% summarise(Population = sum(Population, na.rm=TRUE)) %>%
+    ggplot(aes(x=Year, y=Population, color=Age)) + geom_line() + ylim(0, NA) +
+    facet_wrap(~Age) +
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population by Age in Relevant LA ZIP Codes over Time'))
+
+print(
+  census_by_zip %>%
+    filter(LabelGroup1 == 'SEX AND AGE', !(LabelGroup2 %in% c('MALE', 'FEMALE'))) %>%
+    group_by(Year) %>% mutate(TotalPopulation = sum(Population, na.rm=TRUE)) %>% ungroup() %>%
+    group_by(Age = LabelGroup2, Year) %>% summarise(Proportion = sum(Population, na.rm=TRUE)/first(TotalPopulation)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Age)) + geom_line() + 
+    facet_wrap(~Age) +
+    scale_y_continuous(labels=scales::percent, limits = c(0, NA)) + 
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population Proportion by Age in Relevant LA ZIP Codes over Time'))
+
+# race/ethnicity
+print(
+  census_by_zip_pivoted %>%
+    select(Year, White, Black, Indigenous, Asian, PacificIslander, Other, TwoOrMoreRaces) %>%
+    pivot_longer(cols=c('White', 'Black', 'Indigenous', 'Asian', 'PacificIslander', 'Other', 'TwoOrMoreRaces'),
+                 names_to = 'RaceEthnicity', values_to = 'Population') %>%
+    group_by(RaceEthnicity, Year) %>% summarise(Population = sum(Population, na.rm=TRUE)) %>%
+    ggplot(aes(x=Year, y=Population, color=RaceEthnicity)) + geom_line() + ylim(0, NA) +
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    labs(x='Year', y='Proportion', color='Race') +
+    ggtitle('Population by Race in Relevant LA ZIP Codes over Time'))
+
+print(
+  census_by_zip_pivoted %>%
+    select(Year, White, Black, Indigenous, Asian, PacificIslander, Other, TwoOrMoreRaces) %>%
+    pivot_longer(cols=c('White', 'Black', 'Indigenous', 'Asian', 'PacificIslander', 'Other', 'TwoOrMoreRaces'),
+                 names_to = 'RaceEthnicity', values_to = 'Population')  %>% 
+    group_by(Year) %>% mutate(TotalPopulation = sum(Population, na.rm=TRUE)) %>% ungroup() %>%
+    group_by(RaceEthnicity, Year) %>% summarise(Proportion = sum(Population, na.rm=TRUE)/first(TotalPopulation)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=RaceEthnicity)) + geom_line() + 
+    scale_y_continuous(labels=scales::percent, limits = c(0, NA)) + 
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    labs(x='Year', y='Proportion', color='Race') +
+    ggtitle('Population Proportion by Race in Relevant LA ZIP Codes over Time'))
+
+print(
+  census_by_zip_pivoted %>%
+    select(Year, WhiteAlone, BlackAlone, IndigenousAlone, AsianAlone, 
+           PacificIslanderAlone, OtherAlone, TwoOrMoreRacesAlone, Hispanic) %>%
+    pivot_longer(cols=c('WhiteAlone', 'BlackAlone', 'IndigenousAlone', 'AsianAlone', 
+                        'PacificIslanderAlone', 'OtherAlone', 'TwoOrMoreRacesAlone', 'Hispanic'),
+                 names_to = 'RaceEthnicity', values_to = 'Population') %>%
+    group_by(RaceEthnicity, Year) %>% summarise(Population = sum(Population, na.rm=TRUE)) %>%
+    ggplot(aes(x=Year, y=Population, color=RaceEthnicity)) + geom_line() + ylim(0, NA) +
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    labs(x='Year', y='Proportion', color='Race/Ethnicity') +
+    ggtitle('Population by Race/Ethnicity in Relevant LA ZIP Codes over Time'))
+
+print(
+  census_by_zip_pivoted %>%
+    select(Year, WhiteAlone, BlackAlone, IndigenousAlone, AsianAlone, 
+           PacificIslanderAlone, OtherAlone, TwoOrMoreRacesAlone, Hispanic) %>%
+    pivot_longer(cols=c('WhiteAlone', 'BlackAlone', 'IndigenousAlone', 'AsianAlone', 
+                        'PacificIslanderAlone', 'OtherAlone', 'TwoOrMoreRacesAlone', 'Hispanic'),
+                 names_to = 'RaceEthnicity', values_to = 'Population') %>%
+    group_by(Year) %>% mutate(TotalPopulation = sum(Population, na.rm=TRUE)) %>% ungroup() %>%
+    group_by(RaceEthnicity, Year) %>% summarise(Proportion = sum(Population, na.rm=TRUE)/first(TotalPopulation)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=RaceEthnicity)) + geom_line() + 
+    scale_y_continuous(labels=scales::percent, limits = c(0, NA)) + 
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    labs(x='Year', y='Proportion', color='Race/Ethnicity') +
+    ggtitle('Population Proportion by Race/Ethnicity in Relevant LA ZIP Codes over Time'))
+```
+
+```{r}
+print(
+  commuting_by_zip_pivoted %>%
+    pivot_longer(cols=c('Carpooling', 'Driving', 'PublicTransit', 'Biking', 'TaxiAndOther', 'Walking', 'WorkingFromHome'),
+                 names_to = 'Commute', values_to = 'Population')  %>%
+    group_by(Commute, Year) %>% summarise(Population = sum(Population, na.rm=TRUE)) %>%
+    ggplot(aes(x=Year, y=Population, color=Commute)) + geom_line() + ylim(0, NA) +
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population by Commute in Relevant LA ZIP Codes over Time'))
+
+print(
+  commuting_by_zip_pivoted %>%
+    pivot_longer(cols=c('Carpooling', 'Driving', 'PublicTransit', 'Biking', 'TaxiAndOther', 'Walking', 'WorkingFromHome'),
+                 names_to = 'Commute', values_to = 'Population')  %>%
+    group_by(Year) %>% mutate(TotalPopulation = sum(Population, na.rm=TRUE)) %>% ungroup() %>%
+    group_by(Commute, Year) %>% summarise(Proportion = sum(Population, na.rm=TRUE)/first(TotalPopulation)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Commute)) + geom_line() + 
+    scale_y_continuous(labels=scales::percent, limits = c(0, NA)) + 
+    scale_x_continuous(breaks=scales::breaks_pretty()) +
+    ggtitle('Population Proportion by Commute in Relevant LA ZIP Codes over Time'))
+```
+
+## Comparing the census and commuter data to collisions data
+```{r}
+population_rates_graph(zip_codes_all_metrics, population = 'Hispanic', collision_type = 'HispanicVictim',
+                       graph_title = 'Hispanic Population Proportion vs Collision Victim Proportion', 
+                       legend_position='right')
+```
+```{r}
+population_rates_graph(zip_codes_all_metrics, population = 'WhiteAlone', collision_type = 'WhiteVictim',
+                       graph_title = 'White, Non-Hispanic Population Proportion vs Collision Victim Proportion', 
+                       legend_position='right')
+```
+
+```{r}
+collision_volume_graphs(
+  zip_codes_all_metrics %>% mutate(All = 1), population = 'WorkingFromHome', collision_type = 'All',
+  graph_title = 'Population Working From Home vs Total Collision Volume', legend_position = 'right')
+```
+
+
+
