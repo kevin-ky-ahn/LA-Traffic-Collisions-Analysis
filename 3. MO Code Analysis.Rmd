@@ -22,7 +22,7 @@ options(ggplot2.stat_bin.inform = FALSE)
 # Comparing Intersections
 ```{r}
 print(
-  collisions_with_labeled_intersections %>% 
+  collisions_cleaned %>% 
     filter(OccurredDate >= '2013-01-01',
            OccurredDate < '2025-03-01') %>%
     group_by(OccurredWeek = floor_date(OccurredDate, unit='months'),
@@ -43,7 +43,7 @@ print(
 
 ```{r}
 print(
-  collisions_with_labeled_intersections %>% 
+  collisions_cleaned %>% 
     filter(OccurredDate >= '2013-01-01',
            OccurredDate < '2025-03-01') %>%
     group_by(OccurredWeek = floor_date(OccurredDate, unit='months'),
@@ -67,7 +67,7 @@ print(
 ## Seeing how often intersections have crashes in the vicinity that aren't at intersections - basically none
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(year(OccurredDate) == 2024,
            Latitude != 0, Longitude != 0) %>%
     group_by(RoundedLat = round(Latitude, 3), 
@@ -84,7 +84,7 @@ print(
 ## Comparing the severity of crashes at intersections vs non-intersections
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(OccurredYear == 2024) %>%
     mutate(WasCollisionAtIntersection = ifelse(CollisionAtIntersection == 1, 
                                                'At Intersection', 'Not at Intersection')) %>%
@@ -105,7 +105,7 @@ print(
 ## Looking for dangerous intersections
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(OccurredYear == 2024,
            CollisionAtIntersection == 1,
            Latitude != 0, Longitude != 0) %>%
@@ -126,7 +126,7 @@ print(
 
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(
       # OccurredYear == 2024,
       CollisionAtIntersection == 1,
@@ -143,7 +143,7 @@ print(
 ```
 
 ```{r}
-collisions_with_labeled_intersections %>%
+collisions_cleaned %>%
   filter(
     # OccurredYear == 2024,
     CollisionAtIntersection == 1,
@@ -198,7 +198,7 @@ print(
 ## Finding the intersections with the most/highest rate of pedestrian or bike collisions
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(CollisionAtIntersection == 1,
            Latitude != 0, Longitude != 0) %>%
     group_by(Latitude, Longitude) %>%
@@ -212,7 +212,7 @@ print(
 )
 
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(CollisionAtIntersection == 1,
            Latitude != 0, Longitude != 0) %>%
     group_by(Latitude, Longitude) %>%
@@ -230,7 +230,7 @@ print(
 ## Map of pedestrian collision hot spots
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(CollisionAtIntersection == 1,
            Latitude != 0, Longitude != 0) %>%
     group_by(Latitude, Longitude) %>%
@@ -260,162 +260,162 @@ print(
 # Using the Defined Function for Analysis
 ## Injury Type
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'MostSevereInjuryReported', 
+intro_graphs(collisions_cleaned, 'MostSevereInjuryReported', 
              label='Injury Severity', year=2024)
 ```
 
 ### Finding the intersections with the most/highest rate of hit and runs
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 
+mapping_hotspots(collisions_cleaned, 
                  'FatalInjury', label='Fatal Injuries')
 
-mapping_hotspots(collisions_with_labeled_intersections, 
+mapping_hotspots(collisions_cleaned, 
                  'SevereInjury', label='Severe Injuries')
 ```
 
 ## Collision Object
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'MostVulnerableCollisionObject', 
+intro_graphs(collisions_cleaned, 'MostVulnerableCollisionObject', 
              label='Collision Object', year=2024)
 ```
 
 ### Finding the intersections with the most/highest rate of pedestrian/bike collisions
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 
+mapping_hotspots(collisions_cleaned, 
                  'CollisionWithPedestrian', label='Collision w/ Pedestrians')
 
-mapping_hotspots(collisions_with_labeled_intersections, 
+mapping_hotspots(collisions_cleaned, 
                  'CollisionWithBike', label='Collision w/ Bikes')
 ```
 
 ### Injuries by collision object
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'MostVulnerableCollisionObject', 
+graphing_injury_rates(collisions_cleaned, 'MostVulnerableCollisionObject', 
                       label1='Collision Object', label2='Collision Object')
 
-graphing_injury_rates(collisions_with_labeled_intersections, 'CollisionWithPedestrian', 
+graphing_injury_rates(collisions_cleaned, 'CollisionWithPedestrian', 
                       label1='Collision w/ Pedestrians', label2='Collision w/ Pedestrians')
 ```
 
 ## Hit and Runs
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'HitAndRunSeverity', 
+intro_graphs(collisions_cleaned, 'HitAndRunSeverity', 
              label='Hit & Run Severity', year=2024)
 
-intro_graphs(collisions_with_labeled_intersections, 'HitAndRun', 
+intro_graphs(collisions_cleaned, 'HitAndRun', 
              label='Hit & Run', year=2024)
 ```
 
 
 ### Finding the intersections with the most/highest rate of hit and runs
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'HitAndRun', label='Hit & Runs')
+mapping_hotspots(collisions_cleaned, 'HitAndRun', label='Hit & Runs')
 ```
 
 ### Injuries from hit & runs
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'HitAndRunSeverity', 
+graphing_injury_rates(collisions_cleaned, 'HitAndRunSeverity', 
                       label1='Hit & Run Severity', label2='Hit & Run')
 
-graphing_injury_rates(collisions_with_labeled_intersections, 'HitAndRun', 
+graphing_injury_rates(collisions_cleaned, 'HitAndRun', 
                       label1='Hit & Run', label2='Hit & Run')
 ```
 
 ## DUIs
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'DUISeverity', 
+intro_graphs(collisions_cleaned, 'DUISeverity', 
              label='DUI Severity', year=2024)
 ```
 
 
 ### Finding the intersections with the most/highest rate of hit and runs
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'DUI', label='DUIs')
+mapping_hotspots(collisions_cleaned, 'DUI', label='DUIs')
 ```
 
 ### Injuries from hit & runs
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'DUISeverity', 
+graphing_injury_rates(collisions_cleaned, 'DUISeverity', 
                       label1='DUI Severity', label2='DUI')
 
-graphing_injury_rates(collisions_with_labeled_intersections, 'DUI', 
+graphing_injury_rates(collisions_cleaned, 'DUI', 
                       label1='DUI', label2='DUI')
 ```
 
 ## Private Property Involved
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'PrivatePropertyInvolvement', 
+intro_graphs(collisions_cleaned, 'PrivatePropertyInvolvement', 
              label='Private Property Involved', year=2024)
 ```
 
 
 ### Finding the intersections with the most/highest rate of hit and runs
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'PrivatePropertyInvolved', label='Private Property')
+mapping_hotspots(collisions_cleaned, 'PrivatePropertyInvolved', label='Private Property')
 ```
 
 ### Injuries from hit & runs
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'PrivatePropertyInvolved', 
+graphing_injury_rates(collisions_cleaned, 'PrivatePropertyInvolved', 
                       label1='Private Property Involvement', label2='Private Property Collision')
 ```
 
 ## Public Property Involved
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'CityePropertyInvolvement', 
+intro_graphs(collisions_cleaned, 'CityePropertyInvolvement', 
              label='City Property Involvement', year=2024)
 ```
 
 
 ### Finding the intersections with the most/highest rate of public property involvement
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'CityPropertyInvolved', label='City Property')
+mapping_hotspots(collisions_cleaned, 'CityPropertyInvolved', label='City Property')
 ```
 
 ### Injuries from public property collisions
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'CityePropertyInvolvement', 
+graphing_injury_rates(collisions_cleaned, 'CityePropertyInvolvement', 
                       label1='City Property Involvement', label2='City Property Collision')
 ```
 
 ## Unlicensed Motorists
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'UnlicensedMotorist', 
+intro_graphs(collisions_cleaned, 'UnlicensedMotorist', 
              label='Unlicenced Motorist', year=2024)
 ```
 
 ### Finding the intersections with the most/highest rate of unlicensed motorists
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'UnlicensedMotorist', label='Unlicenced Motorists')
+mapping_hotspots(collisions_cleaned, 'UnlicensedMotorist', label='Unlicenced Motorists')
 ```
 
 ### Injuries from unlicensed motorists
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'UnlicensedMotorist', 
+graphing_injury_rates(collisions_cleaned, 'UnlicensedMotorist', 
                       label1='Unlicensed Motorist')
 ```
 
 ## Homeless Victim
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'HomelessVictim', 
+intro_graphs(collisions_cleaned, 'HomelessVictim', 
              label='Homeless Victim', year=2024)
 ```
 
 
 ### Finding the intersections with the most/highest rate of homeless victimes
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 'HomelessVictim', label='Homeless Victims')
+mapping_hotspots(collisions_cleaned, 'HomelessVictim', label='Homeless Victims')
 ```
 
 ### Injuries to homeless victims
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'HomelessVictim', 
+graphing_injury_rates(collisions_cleaned, 'HomelessVictim', 
                       label1='Homeless Victim')
 ```
 
 ## Victim Descent
 ```{r, fig.height=2, fig.width=4}
-intro_graphs(collisions_with_labeled_intersections, 'VictimEthnicity', 
+intro_graphs(collisions_cleaned, 'VictimEthnicity', 
              label='Victim Ethnicity', year=2024)
 
 # Descent Code: A - Other Asian B - Black C - Chinese D - Cambodian F - Filipino G - Guamanian H - Hispanic/Latin/Mexican I - American Indian/Alaskan Native J - Japanese K - Korean L - Laotian O - Other P - Pacific Islander S - Samoan U - Hawaiian V - Vietnamese W - White X - Unknown Z - Asian Indian
@@ -424,13 +424,13 @@ intro_graphs(collisions_with_labeled_intersections, 'VictimEthnicity',
 
 ### Finding the intersections with the most/highest rate of Hispanic victims
 ```{r, fig.height=2, fig.width=4}
-mapping_hotspots(collisions_with_labeled_intersections, 
+mapping_hotspots(collisions_cleaned, 
                  'HispanicOrLatinoVictim', label='Hispanic/Latino Victims')
 ```
 
 ### Injuries by Victim Ethnicity
 ```{r, fig.height=2, fig.width=4}
-graphing_injury_rates(collisions_with_labeled_intersections, 'VictimEthnicity', 
+graphing_injury_rates(collisions_cleaned, 'VictimEthnicity', 
                       label1='Victim Ethnicity')
 ```
 

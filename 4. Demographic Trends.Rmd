@@ -35,7 +35,7 @@ print(
 print(
   census_data %>%
     filter(DemographicType == 'Age') %>%
-    mutate(Proportion = Population/Total) %>%
+    mutate(Proportion = Population/TotalPopulation) %>%
     ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
     geom_line() +
     theme_set(theme_gray(base_size = 11)) +
@@ -46,9 +46,9 @@ print(
 
 ## Breakdown of collisions by race/ethnicity
 ```{r, fig.height=4, fig.width=6}
-for (race in c('Asian', 'Black American', 'Hispanic/Latino', 'White')) {
+for (race in c('Asian', 'Black', 'Hispanic', 'White')) {
   print(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(Latitude != 0, Longitude != 0, VictimEthnicity == local(race)) %>%
       group_by(Latitude = round(Latitude, 3), Longitude = round(Longitude, 3), VictimEthnicity) %>%
       summarise(Collisions = n()) %>%
@@ -57,7 +57,7 @@ for (race in c('Asian', 'Black American', 'Hispanic/Latino', 'White')) {
       geom_point() +
       xlim(-118.7, -118.1) +
       ylim(33.6, 34.4) +
-      facet_wrap(~VictimEthnicity)
+      ggtitle(paste('Collision Density Map for ', local(race), ' Victims', sep=''))
   )
 }
 ```
@@ -68,7 +68,7 @@ print(
   census_data %>%
     group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
     left_join(
-      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      collisions_cleaned %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
       by = c('Year' = 'OccurredYear')
     ) %>%
     mutate(CollisionRate = Collisions/TotalPopulation) %>%
@@ -81,7 +81,7 @@ print(
   census_data %>%
     group_by(Year) %>% summarise(TotalPopulation = first(TotalPopulation)) %>%
     left_join(
-      collisions_with_labeled_intersections %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
+      collisions_cleaned %>% group_by(OccurredYear) %>% summarise(Collisions = n()),
       by = c('Year' = 'OccurredYear')
     ) %>%
     left_join(commuting_data_overall, by='Year') %>%
@@ -184,7 +184,7 @@ print(
 ## Distributions of collision time over the years
 ```{r}
 print(
-  collisions_with_labeled_intersections %>%
+  collisions_cleaned %>%
     filter(!is.na(OccurredTime), OccurredYear >= 2016, 
            OccurredYear < 2025, OccurredYear != 2020) %>%
     mutate(Period = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID'),) %>%

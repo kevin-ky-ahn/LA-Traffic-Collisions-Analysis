@@ -18,40 +18,27 @@ library(tseries)
 ```
 
 # Data for File 3. Data Exploration
-# Load and Clean Data
 ```{r}
-collisions_df <- read.csv('Data/Traffic_Collision_Data_from_2010_to_Present.csv')
+# for runtime logging
+file_1_start <- Sys.time()
+runtime_checkpoints <- c(file_1_start)
 
-collisions_cleaned <- collisions_df %>%
-  rename(DRKey = `DR.Number`,
-         ReportedDate = `Date.Reported`,
-         OccurredDate = `Date.Occurred`,
-         OccurredTime = `Time.Occurred`,
-         AreaKey = `Area.ID`,
-         AreaName = `Area.Name`,
-         ReportingDistrict = `Reporting.District`,
-         CrimeCode = `Crime.Code`,
-         CrimeCodeDescription = `Crime.Code.Description`,
-         MOCodes = `MO.Codes`,
-         VictimAge = `Victim.Age`,
-         VictimSex = `Victim.Sex`,
-         VictimDescent = `Victim.Descent`,
-         PremiseCode = `Premise.Code`,
-         PremiseDescription = `Premise.Description`,
-         CrossStreet = `Cross.Street`
-         ) %>%
+print_checkpoint_runtime <- function(current_time) {
+  last_checkpoint <- max(runtime_checkpoints)
+  runtime_checkpoints <<- c(runtime_checkpoints, current_time)
+  
+  print(paste('Runtime to checkpoint ', length(runtime_checkpoints) - 1, ': ', 
+              format(current_time - last_checkpoint), sep=''))
+}
+```
+
+# Load the Cleaned Collisions Data
+```{r}
+collisions_cleaned <- read.csv('Cleaned Data/LACollisionsDataCleaned.csv') %>%
   mutate(
-    ReportedDate = as.Date(ReportedDate, format='%m/%d/%Y'),
-    OccurredDate = as.Date(OccurredDate, format='%m/%d/%Y'),
-    Address = str_squish(Address),
-    CrossStreet = str_squish(CrossStreet),
-    AreaName = str_squish(AreaName),
-    CrimeCodeDescription = str_squish(CrimeCodeDescription),
-    MOCodes = str_squish(MOCodes)
-  ) %>% rowwise() %>% mutate(
-    Latitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[1]]),
-    Longitude = as.numeric(str_split(gsub('\\)', '', gsub('\\(', '', Location)), ', ')[[1]][[2]]),
-  ) %>% select(-Location)
+    ReportedDate = as.Date(ReportedDate, format='%Y-%m-%d'),
+    OccurredDate = as.Date(OccurredDate, format='%Y-%m-%d'),
+  )
 ```
 
 # Breakdown of Fields
@@ -78,6 +65,8 @@ collisions_by_week <- collisions_cleaned %>%
 collisions_by_area_and_week <- collisions_cleaned %>% 
   group_by(AreaName, OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
   summarise(Collisions = n())
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 ### Mean and median occurred time over time
@@ -121,6 +110,8 @@ collisions_by_coordinates_and_year <- collisions_cleaned %>%
             AvgCollisionsPerLocation = mean(Collisions, na.rm=TRUE),
             NumCollisionRecords = n()) %>%
   filter(Latitude != 0 | Longitude != 0)
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Forecasting Overall Collision Counts
@@ -137,6 +128,8 @@ collisions_over_time_post_covid <- collisions_cleaned %>%
   filter(OccurredDate >= as.Date('2021-01-03')) %>%
   group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>%
   summarise(Collisions = n())
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Identifying Collision Hot Spots
@@ -166,80 +159,10 @@ collision_mo_codes <- collisions_cleaned %>%
   separate_rows(MOCode, convert=TRUE)
 ```
 
-```{r}
-mo_code_descriptions <- read.csv('Data/MOCodes.csv') %>% 
-  mutate(Description = substring(MOCode, 6),
-         MOCode = as.numeric(substring(MOCode, 1, 4)))
-
-mo_code_descriptions %>% write.csv('Cleaned Data/MOCodeDescriptions.csv', row.names=FALSE)
-
-collisions_with_mo_labels <- collisions_cleaned %>%
-  mutate(
-    AtIntersection = grepl('3036', MOCodes),
-    NotAtIntersection = grepl('3037', MOCodes),
-    MovementPrecedingCollisions = grepl('3701', MOCodes),
-    TypeOfCollision = grepl('3401', MOCodes),
-    CollisionWithVehicle = grepl('3004', MOCodes),
-    CollisionWithParkedVehicle = grepl('3006', MOCodes),
-    CollisionWithFixedObject = grepl('3011', MOCodes),
-    CollisionWithPedestrian = grepl('3003', MOCodes),
-    CollisionWithBike = grepl('3008', MOCodes),
-    CollisionWithOtherObject = grepl('3012', MOCodes),
-    HitAndRun = grepl('3030', MOCodes) | grepl('3029', MOCodes),
-    HitAndRunMisdemeanor = grepl('3030', MOCodes),
-    HitAndRunFelony = grepl('3029', MOCodes),
-    InjuryInvolved = grepl('3026', MOCodes) | grepl('3025', MOCodes) |
-      grepl('3024', MOCodes) | grepl('3027', MOCodes),
-    NonInjury = grepl('3028', MOCodes),
-    ComplaintOfInjury = grepl('3026', MOCodes),
-    VisibleInjury = grepl('3025', MOCodes),
-    SevereInjury = grepl('3024', MOCodes),
-    FatalInjury = grepl('3027', MOCodes),
-    CityPropertyInvolved = grepl('3034', MOCodes),
-    CityPropertyNotInvolved = grepl('3035', MOCodes),
-    PrivatePropertyInvolved = grepl('3032', MOCodes),
-    PrivatePropertyNotInvolved = grepl('3033', MOCodes),
-    UnlicensedMotorist = grepl('3602', MOCodes),
-    DUIMisdemeanor = grepl('3039', MOCodes),
-    DUIFelony = grepl('3038', MOCodes),
-    Sobriety = grepl('3801', MOCodes),
-    HomelessVictim = grepl('1218', MOCodes)
-  )
-
-collisions_with_mo_labels %>% 
-  write.csv('Cleaned Data/CollisionsWithMOLabels.csv',
-            row.names=FALSE)
-```
-
 # Data for File 4. MO Code Analysis
-# Load Data
-```{r}
-collisions_with_injury_type <- collisions_with_mo_labels %>%
-  mutate(
-    ReportedDate = as.Date(ReportedDate, format='%Y-%m-%d'),
-    OccurredDate = as.Date(OccurredDate, format='%Y-%m-%d'),
-    MostSevereInjuryReported = case_when(
-      FatalInjury ~ 'Fatal Injury',
-      SevereInjury ~ 'Severe Injury',
-      VisibleInjury ~ 'Visible Injury',
-      ComplaintOfInjury ~ 'Complaint of Injury',
-      NonInjury ~ 'No Injury',
-      TRUE ~ 'Unspecified'
-    )
-  )
-
-collisions_with_injury_type <- collisions_with_injury_type %>% mutate(
-    CollisionAtIntersection = case_when(
-      AtIntersection ~ 'At Intersection',
-      NotAtIntersection ~ 'Not At Intersection',
-      TRUE ~ 'Unspecified'
-    ))
-```
-
-## Second round - more directed, hopefully more fruitful
 ```{r}
 # trying again to round out the intersection areas by name and coordinates
-collisions_at_intersection_areas <- collisions_with_injury_type %>%
+collisions_at_intersection_areas <- collisions_cleaned %>%
   filter(Latitude != 0, Longitude != 0) %>%
   mutate(
     HasCrossStreet = as.numeric(!is.na(CrossStreet) & !(CrossStreet == '')),
@@ -272,130 +195,45 @@ collisions_at_intersection_areas <- collisions_with_injury_type %>%
     ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection > 
                                     ProportionListedAsNotAtIntersection)
   )
-```
 
-## Trying this again, without street names
-```{r}
-identifying_intersections <- collisions_with_injury_type %>%
-  filter(Latitude != 0, Longitude != 0) %>%
-  mutate(
-    HasCrossStreet = as.numeric(!is.na(CrossStreet) & 
-                                  !(CrossStreet == ''))) %>%
-  group_by(
-    RoundedLat = round(Latitude, 4),
-    RoundedLon = round(Longitude, 4)) %>%
-  summarise(Collisions = n(), 
-            NumCollisionsWithCrossStreet = sum(HasCrossStreet),
-            NumCollisionsAtIntersection = sum(AtIntersection),
-            NumCollisionsNotAtIntersection = sum(NotAtIntersection),
-            ProportionListedWithCrossStreet = mean(HasCrossStreet),
-            ProportionListedAsAtIntersection = mean(AtIntersection),
-            ProportionListedAsNotAtIntersection = mean(NotAtIntersection),
-            HasCrossStreet = max(HasCrossStreet),
-            ListedAsIntersection = max(AtIntersection),
-            ListedAsNotIntersection = max(NotAtIntersection),
-            ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection >
-                                            ProportionListedAsNotAtIntersection)
-    ) %>% ungroup()
-```
-
-```{r}
-collisions_with_labeled_intersections <- collisions_with_injury_type %>%
-  # filter(Latitude != 0, Longitude != 0) %>%
-  select(-CollisionAtIntersection) %>%
-  left_join(
-    identifying_intersections %>% 
-      mutate(CollisionAtIntersection = ifelse(HasCrossStreet %>% is.na(), 0, HasCrossStreet), 
-             Latitude = RoundedLat, Longitude = RoundedLon) %>%
-      select(Latitude, Longitude, CollisionAtIntersection, ListedAsIntersection),
-    by = c('Latitude', 'Longitude')
-  ) %>%
-  mutate(
-    CollisionAtIntersection = ifelse(is.na(CollisionAtIntersection), 
-                                     as.numeric(CrossStreet != ''), 
-                                     CollisionAtIntersection),
-    OccurredYear = year(OccurredDate)
-  ) %>% 
-  mutate(MostVulnerableCollisionObject = factor(case_when(
-    CollisionWithPedestrian ~ 'Pedestrian', 
-    CollisionWithBike ~ 'Bike',
-    CollisionWithOtherObject ~ 'Other Object',
-    CollisionWithVehicle ~ 'Vehicle',
-    CollisionWithFixedObject ~ 'Fixed Object',
-    CollisionWithParkedVehicle ~ 'Parked Vehicle',
-    TRUE ~ 'Unknown'),
-    levels = c('Pedestrian', 'Bike', 'Vehicle', 'Fixed Object',
-               'Parked Vehicle', 'Other Object'))) %>%
-  mutate(HitAndRunSeverity = factor(case_when(
-    HitAndRunFelony ~ 'Hit & Run Felony', 
-    HitAndRunMisdemeanor ~ 'Hit & Run Misdemeanor',
-    HitAndRun ~ 'Other Hit & Run',
-    TRUE ~ 'Not Labelled Hit & Run'),
-    levels = c('Hit & Run Felony', 'Hit & Run Misdemeanor',
-               'Other Hit & Run', 'Not Labelled Hit & Run')))  %>%
-  mutate(DUI = (DUIMisdemeanor | DUIFelony),
-         DUISeverity = factor(case_when(
-           DUIFelony ~ 'DUI Felony', 
-           DUIMisdemeanor ~ 'DUI Misdemeanor',
-           Sobriety ~ 'Sobriety',
-           TRUE ~ 'Unspecified'),
-           levels = c('DUI Felony', 'DUI Misdemeanor',
-                      'Sobriety', 'Unspecified'))) %>% 
-  mutate(PrivatePropertyInvolvement = factor(case_when(
-    PrivatePropertyInvolved ~ 'Involved', 
-    PrivatePropertyNotInvolved ~ 'Not Involved',
-    TRUE ~ 'Unspecified'),
-    levels = c('Involved', 'Not Involved', 'Unspecified'))) %>% 
-  mutate(CityePropertyInvolvement = factor(case_when(
-    CityPropertyInvolved ~ 'Involved', 
-    CityPropertyNotInvolved ~ 'Not Involved',
-    TRUE ~ 'Unspecified'),
-    levels = c('Involved', 'Not Involved', 'Unspecified'))) %>% 
-  mutate(VictimEthnicity = case_when(
-    VictimDescent == 'H' ~ 'Hispanic',
-    VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
-    VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
-    VictimDescent == 'B' ~ 'Black',
-    VictimDescent == 'W' ~ 'White',
-    VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
-    VictimDescent == 'I' ~ 'Indigenous',
-    TRUE ~ '?'),
-    HispanicOrLatinoVictim = (VictimEthnicity == 'Hispanic'))
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Collision Object
 ```{r}
-collisions_by_object <- collisions_with_labeled_intersections %>%
+collisions_by_object <- collisions_cleaned %>%
     filter(CollisionWithVehicle) %>%
     mutate(CollisionObject = 'Vehicle') %>% 
   rbind(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(CollisionWithParkedVehicle) %>%
       mutate(CollisionObject = 'Parked Vehicle')
   ) %>% 
   rbind(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(CollisionWithFixedObject) %>%
       mutate(CollisionObject = 'Fixed Object')
   ) %>% 
   rbind(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(CollisionWithPedestrian) %>%
       mutate(CollisionObject = 'Pedestrian')
   ) %>% 
   rbind(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(CollisionWithBike) %>%
       mutate(CollisionObject = 'Bike') 
   ) %>% 
   rbind(
-    collisions_with_labeled_intersections %>%
+    collisions_cleaned %>%
       filter(CollisionWithOtherObject) %>%
       mutate(CollisionObject = 'Other') 
   ) %>% 
   select(CollisionObject, OccurredDate, OccurredYear, Latitude, Longitude, 
          CollisionAtIntersection, InjuryInvolved, MostSevereInjuryReported,
          NonInjury, ComplaintOfInjury, VisibleInjury, SevereInjury, FatalInjury)
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Defining Functions for Future Analysis
@@ -593,16 +431,20 @@ graphing_injury_rates <- function(graph_data, field_name, label1=field_name,
       ggtitle(paste('Distribution of ', label2, ' Causes by Injury Severity, ', year_label, sep=''))
   )
 }
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Tracking Number of MOCodes over Time
 ```{r}
-num_mo_codes <- collisions_with_labeled_intersections %>%
-  # select(-NumMOCodes) %>%
-  left_join(collisions_with_labeled_intersections %>% 
-              mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
-              separate_rows(MOCode, convert=TRUE) %>%
-              group_by(DRKey) %>% summarise(NumMOCodes = n_distinct(MOCode)), by='DRKey')
+mo_code_descriptions <- read.csv('Data/MOCodes.csv') %>% 
+  mutate(Description = substring(MOCode, 6),
+         MOCode = as.numeric(substring(MOCode, 1, 4)))
+
+num_mo_codes <- collisions_cleaned %>% 
+  mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
+  separate_rows(MOCode, convert=TRUE) 
+  group_by(DRKey) %>% summarise(NumMOCodes = n_distinct(MOCode))
 ```
 
 ```{r}
@@ -634,6 +476,8 @@ collision_mo_codes_pre_post_covid <- collision_mo_codes_labeled %>%
     ProportionPostCOVID = PostCOVIDCollisions/first(TotalPostCOVIDCollisions),
     ChangeInProportion = ProportionPostCOVID - ProportionPreCOVID
   )
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 ## Proportion of collisions w/ conflicting MO codes over time
@@ -648,7 +492,7 @@ check_multi_substring <- function(patterns, text) {
   return(as.numeric(count > 1))
 }
 
-collisions_mo_code_conflicts <- collisions_with_labeled_intersections %>% 
+collisions_mo_code_conflicts <- collisions_cleaned %>% 
   mutate(
     ConflictingIntersection = check_multi_substring(c(3037, 3036), MOCodes),
     ConflictingCityProperty = check_multi_substring(c(3035, 3034), MOCodes),
@@ -665,6 +509,8 @@ collisions_mo_code_conflicts <- collisions_with_labeled_intersections %>%
       ConflictingInjury == 1 | ConflictingRegion == 1 |
       ConflictingPCF == 1 | ConflictingLocation == 1
   )
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Data for File 5. Demographic Trends
@@ -676,6 +522,7 @@ census_data <- read.csv('Cleaned Data/LACensusDataOverall.csv')
 # Commutes over Time
 ## Commuting shifts after COVID
 ```{r}
+commuting_data_overall <- read.csv('Cleaned Data/LACommutingDataOverall.csv')
 commuting_data_by_ethnicity <- read.csv('Cleaned Data/LACommutingDataByEthnicity.csv')
 
 commuting_by_covid_period <- commuting_data_by_ethnicity %>%
@@ -697,12 +544,13 @@ commuting_by_covid_period <- commuting_data_by_ethnicity %>%
     CommutingByTaxiBikeAndOtherRate = round(AvgCommutingByTaxiBikeAndOther/AvgWorkersPerYear, 2),
     WFHRate = round(AvgWorkFromHome/AvgWorkersPerYear, 2),
   )
-```
 
+print_checkpoint_runtime(Sys.time())
+```
 
 ## Comparing number of collision victims by ethnicity, compared to WFH rate
 ```{r}
-collisions_by_ethnicity <- collisions_with_labeled_intersections %>%
+collisions_by_ethnicity <- collisions_cleaned %>%
   mutate(
     VictimEthnicity = case_when(
       VictimDescent == 'H' ~ 'Hispanic',
@@ -727,53 +575,14 @@ collisions_by_ethnicity <- collisions_with_labeled_intersections %>%
     PublicTransitProportion = PublicTransit/TotalWorkers,
     WFHProportion = WorkingFromHome/TotalWorkers,
     CollisionRate = Collisions/Population)
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Parsing ZIP Codes
 ```{r}
-zip_codes_reindexed <- read.csv('Cleaned Data/LAZipCodesInterpolated.csv')
-```
+all_coordinates <- read.csv('Cleaned Data/LACoordinatesByZIPCode.csv')
 
-## Labeling the collision coordinates ZIP codes using a Latitude-wise method
-```{r}
-all_coordinates <- zip_codes_reindexed %>% mutate(CoordinateType = 'Boundary') %>%
-  mutate(Latitude = round(Latitude, 4), Longitude = round(Longitude, 4),
-         LateralDirection = case_when(
-           NextLatitude > Latitude ~ 1,
-           NextLatitude < Latitude ~ -1,
-           TRUE ~ 0),
-         Longitude = case_when(
-           LateralDirection == 1 ~ Longitude - 0.00009,
-           LateralDirection == -1 ~ Longitude + 0.00009,
-           TRUE ~ Longitude)) %>%
-  select(Latitude, Longitude, ZIPCode, CoordinateType) %>%
-  rbind(collisions_with_labeled_intersections %>% 
-          filter(Latitude != 0, Longitude != 0) %>% 
-          mutate(ZIPCode = NA, CoordinateType = 'Collision') %>% 
-          select(Latitude, Longitude, ZIPCode, CoordinateType) %>% distinct()) %>%
-  arrange(Latitude, Longitude, ZIPCode) %>%
-  mutate(IsCollisionPoint = ifelse(CoordinateType == 'Collision', 1, 0)) %>%
-  group_by(Latitude, ZIPCode) %>%
-  mutate(MinLongitude = min(Longitude), MaxLongitude = max(Longitude)) %>% ungroup() %>%
-  mutate(Backfilled = case_when(CoordinateType == 'Collision' ~ 0, 
-                                Longitude == MaxLongitude ~ NA, TRUE ~ ZIPCode),
-         Frontfilled = case_when(CoordinateType == 'Collision' ~ 0,
-                                 Longitude == MinLongitude ~ NA, TRUE ~ ZIPCode),) %>%
-  fill(Backfilled, .direction='up') %>%
-  fill(Frontfilled, .direction='down') %>%
-  mutate(
-    Backfilled = ifelse(Backfilled == 0, NA, Backfilled),
-    Frontfilled = ifelse(Frontfilled == 0, NA, Frontfilled),
-  )  %>%
-  fill(Backfilled, .direction='down') %>%
-  fill(Frontfilled, .direction='up') %>%
-  mutate(ZIPCode = ifelse(CoordinateType == 'Collision', 
-                          case_when(
-                            Backfilled == 91330 ~ Frontfilled,
-                            TRUE ~ Backfilled), ZIPCode))
-```
-
-```{r}
 relevant_zip_codes <- (all_coordinates %>% group_by(ZIPCode) %>% 
   summarise(NumCollisionPoints = sum(IsCollisionPoint)) %>%
   filter(NumCollisionPoints > 0) %>% ungroup() %>%
@@ -784,6 +593,8 @@ conflicted_coordinates <- all_coordinates %>%
          Backfilled != Frontfilled) %>%
   group_by(Backfilled, Frontfilled) %>% 
   summarise(1)
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 # Breaking Down Demographics by ZIP Code
@@ -821,8 +632,9 @@ census_by_zip_pivoted <- census_by_zip %>%
          Indigenous, PacificIslander, TwoOrMoreRaces, Other, WhiteAlone, 
          AsianAlone, BlackAlone, IndigenousAlone, PacificIslanderAlone,
          TwoOrMoreRacesAlone, OtherAlone, Under5Years, `5to9Years`, everything())
-```
 
+print_checkpoint_runtime(Sys.time())
+```
 
 ```{r}
 commuting_by_zip_pivoted <- commuting_by_zip %>%
@@ -841,14 +653,15 @@ commuting_by_zip_pivoted <- commuting_by_zip %>%
   select(Year, ZIP, LabelGroup, Population) %>%
   group_by(Year, ZIP, LabelGroup) %>% summarise(Population = sum(Population)) %>% ungroup() %>%
   pivot_wider(names_from=LabelGroup, values_from=Population)
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 ```{r}
 set.seed(55)
 
-zip_codes_all_metrics <- collisions_with_labeled_intersections %>%
-  rename(Year = OccurredYear) %>%
-  filter(Year >= 2013, Year <= 2024) %>%
+zip_codes_all_metrics <- collisions_cleaned %>%
+  filter(OccurredYear >= 2013, OccurredYear <= 2024) %>%
   left_join(
     all_coordinates %>%
       filter(CoordinateType == 'Collision') %>%
@@ -857,34 +670,14 @@ zip_codes_all_metrics <- collisions_with_labeled_intersections %>%
                               sample(c(Backfilled, Frontfilled), 1), Backfilled)) %>%
       select(Latitude, Longitude, ZIPCode), by=c('Latitude', 'Longitude')) %>%
   left_join(census_by_zip_pivoted %>% mutate(ZIPCode = as.numeric(ZIP)) %>%
-              select(-ZIP), by=c('ZIPCode', 'Year')) %>%
+              rename(OccurredYear = Year) %>% select(-ZIP), 
+            by=c('ZIPCode', 'OccurredYear')) %>%
   left_join(commuting_by_zip_pivoted %>% mutate(ZIPCode = as.numeric(ZIP)) %>%
-              select(-ZIP), by=c('ZIPCode', 'Year')) %>%
-  mutate(
-    MaleVictim = (VictimSex == 'M'),
-    FemaleVictim = (VictimSex == 'F'),
-    VictimUnder5Years = (VictimAge < 5),
-    Victim5to9Years = (VictimAge >= 5 & VictimAge <= 9),
-    Victim10to14Years = (VictimAge >= 10 & VictimAge <= 14),
-    Victim15to19Years = (VictimAge >= 15 & VictimAge <= 19),
-    Victim20to24Years = (VictimAge >= 20 & VictimAge <= 24),
-    Victim25to34Years = (VictimAge >= 25 & VictimAge <= 34),
-    Victim35to44Years = (VictimAge >= 35 & VictimAge <= 44),
-    Victim45to54Years = (VictimAge >= 45 & VictimAge <= 54),
-    Victim55to59Years = (VictimAge >= 55 & VictimAge <= 59),
-    Victim60to64Years = (VictimAge >= 60 & VictimAge <= 64),
-    Victim65to74Years = (VictimAge >= 65 & VictimAge <= 74),
-    Victim75to84Years = (VictimAge >= 75 & VictimAge <= 844),
-    Victim84YearsAndOver = (VictimAge >= 85),
-    WhiteVictim = (VictimDescent == 'W'),
-    BlackVictim = (VictimDescent == 'B'),
-    IndigenousVictim = (VictimDescent == 'I'),
-    AsianVictim = (VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z')),
-    PacificIslanderVictim = (VictimDescent %in% c('P', 'S', 'U')),
-    HispanicVictim = (VictimDescent == 'H'),
-    OtherVictim = (VictimDescent %in% c('O', 'X', '', '-'))
-  ) %>%
+              rename(OccurredYear = Year) %>% select(-ZIP), 
+            by=c('ZIPCode', 'OccurredYear')) %>%
   ungroup()
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 ## Comparing the census and commuter data to collisions data
@@ -898,12 +691,12 @@ population_rates_graph <- function(pop_df, population='', collision_type='',
  
   print(
     pop_df %>% 
-      filter(Year >= 2016, Year <= 2024, Year != 2020) %>% 
+      filter(OccurredYear >= 2016, OccurredYear <= 2024, OccurredYear != 2020) %>% 
       rename(
         TargetFeature1 = as.symbol(local(population)),
         TargetFeature2 = as.symbol(local(collision_type))
       ) %>%
-      group_by(ZIPCode, Year) %>%
+      group_by(ZIPCode, OccurredYear) %>%
       summarise(
         TargetFeature1 = first(TargetFeature1),
         TotalPopulation = first(TotalPopulation),
@@ -912,7 +705,7 @@ population_rates_graph <- function(pop_df, population='', collision_type='',
         TotalCollisions = n()
       ) %>%
       filter(TargetFeature2 >= local(victim_threshold)) %>%
-      mutate(TimePeriod = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID')) %>%
+      mutate(TimePeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID')) %>%
       group_by(ZIPCode, TimePeriod) %>%
       summarise(
         TargetFeature1 = mean(TargetFeature1, na.rm=TRUE),
@@ -935,6 +728,8 @@ population_rates_graph <- function(pop_df, population='', collision_type='',
       ggtitle(local(graph_title), subtitle='By ZIP Code in LA, Pre-COVID vs Post-COVID')
   )  
 }
+
+print_checkpoint_runtime(Sys.time())
 ```
 
 ```{r}
@@ -946,20 +741,20 @@ collision_volume_graphs <- function(pop_df, population = '', collision_type = ''
                                     bounded_timeframe = TRUE, include_2020 = FALSE) {
   print(
     pop_df %>% 
-      filter( (Year >= 2016 & Year <= 2024) |
+      filter( (OccurredYear >= 2016 & OccurredYear <= 2024) |
                local(!bounded_timeframe),
-             Year != 2020 | local(include_2020)) %>% 
+             OccurredYear != 2020 | local(include_2020)) %>% 
       rename(
         TargetFeature1 = as.symbol(local(population)),
         TargetFeature2 = as.symbol(local(collision_type))
       ) %>%
-      group_by(ZIPCode, Year) %>%
+      group_by(ZIPCode, OccurredYear) %>%
       summarise(
         TargetFeature1 = first(TargetFeature1),
         TargetFeature2 = sum(TargetFeature2, na.rm=TRUE),
       ) %>%
       filter(TargetFeature2 >= local(victim_threshold)) %>%
-      mutate(TimePeriod = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID')) %>%
+      mutate(TimePeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID')) %>%
       group_by(ZIPCode, TimePeriod) %>%
       summarise(
         PopulationVolume = mean(TargetFeature1, na.rm=TRUE),
@@ -974,4 +769,11 @@ collision_volume_graphs <- function(pop_df, population = '', collision_type = ''
       ggtitle(local(graph_title), subtitle='By ZIP Code in LA')
   )  
 }
+```
+
+```{r}
+# for runtime logging
+file_1_end <- Sys.time()
+
+print(paste('Total runtime: ', format(file_1_end - file_1_start)))
 ```

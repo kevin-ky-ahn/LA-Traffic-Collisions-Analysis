@@ -83,11 +83,6 @@ print(collisions_by_occurred_by_week %>% ggplot(aes(x=OccurredDate, y=Collisions
 ```
 
 ### Looking at it by week and by area
-```{r}
-print(collisions_by_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
-    geom_line() + ggtitle('Collisions by Week of Occurred Date'))
-```
-
 ```{r, fig.width=10, fig.height=8}
 print(collisions_by_area_and_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
         facet_wrap(~AreaName) + geom_line() +
