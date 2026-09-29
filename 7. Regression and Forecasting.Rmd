@@ -1,0 +1,137 @@
+---
+title: "Traffic Collisions Location Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Predicting Injury Severity
+```{r}
+```
+
+# Forecasting Overall Collision Counts
+## Pre-COVID
+```{r}
+start_time <- c(year(min(collisions_over_time_pre_covid$OccurredDate)), 
+                month(min(collisions_over_time_pre_covid$OccurredDate)))
+
+collisions_pre_covid_ts <- ts(collisions_over_time_pre_covid$Collisions, 
+                    start = start_time, frequency = 52)
+
+train <- head(collisions_pre_covid_ts, round(length(collisions_pre_covid_ts) * 0.8))
+h <- length(collisions_pre_covid_ts) - length(train)
+test <- tail(collisions_pre_covid_ts, h)
+```
+
+```{r}
+collisions_pre_covid_auto_model <- auto.arima(train)
+collisions_pre_covid_auto_model
+```
+
+### Differencing
+```{r}
+train %>% adf.test()
+train %>% ggtsdisplay(main='')
+
+train_dff1 <- train %>% diff()
+train_dff1 %>% adf.test()
+train_dff1 %>% ggtsdisplay(main='')
+```
+
+### AR
+```{r}
+pacf(train_dff1) # 3-4
+```
+### MA
+```{r}
+acf(train_dff1) #2
+```
+### ARIMA
+```{r}
+collisions_pre_covid_model <- Arima(train, order=c(3, 1, 2))
+collisions_pre_covid_model
+```
+
+### Comparing AIC
+```{r}
+exp((collisions_pre_covid_auto_model$aic - collisions_pre_covid_model$aic)/2)
+```
+### Forecast
+```{r}
+forecast_1 <- forecast(collisions_pre_covid_auto_model, h=length(test))
+forecast_2 <- forecast(collisions_pre_covid_model, h=length(test))
+
+autoplot(collisions_pre_covid_ts)
+autoplot(forecast_1)
+autoplot(forecast_2)
+```
+
+## Post-COVID
+```{r}
+start_time <- c(year(min(collisions_over_time_post_covid$OccurredDate)), 
+                month(min(collisions_over_time_post_covid$OccurredDate)))
+
+collisions_post_covid_ts <- ts(collisions_over_time_post_covid$Collisions, 
+                    start = start_time, frequency = 52)
+
+train <- head(collisions_post_covid_ts, round(length(collisions_post_covid_ts) * 0.8))
+h <- length(collisions_post_covid_ts) - length(train)
+test <- tail(collisions_post_covid_ts, h)
+```
+
+```{r}
+collisions_post_covid_auto_model <- auto.arima(train)
+collisions_post_covid_auto_model
+```
+
+### Differencing
+```{r}
+train %>% adf.test()
+train %>% ggtsdisplay(main='')
+
+train_dff1 <- train %>% diff()
+train_dff1 %>% adf.test()
+train_dff1 %>% ggtsdisplay(main='')
+```
+
+### AR
+```{r}
+pacf(train) # 1-2
+```
+### MA
+```{r}
+acf(train) #3
+```
+### ARIMA
+```{r}
+collisions_post_covid_model <- Arima(train, order=c(1, 0, 3))
+collisions_post_covid_model
+```
+
+### Comparing AIC
+```{r}
+exp((collisions_post_covid_auto_model$aic - collisions_post_covid_model$aic)/2)
+```
+### Forecast
+```{r}
+forecast_1 <- forecast(collisions_post_covid_auto_model, h=length(test))
+forecast_2 <- forecast(collisions_post_covid_model, h=length(test))
+
+autoplot(collisions_post_covid_ts)
+autoplot(forecast_1)
+autoplot(forecast_2)
+```

@@ -178,7 +178,8 @@ collisions_cleaned <- collisions_df %>%
     VictimDescent == 'W' ~ 'White',
     VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
     VictimDescent == 'I' ~ 'Indigenous',
-    TRUE ~ '?'),
+    TRUE ~ '?') %>% factor(levels=c('Asian', 'Black', 'Hispanic', 'Indigenous', 
+                                    'Pacific Islander', 'White', 'Other')),
     HispanicOrLatinoVictim = (VictimEthnicity == 'Hispanic'),
 
     MaleVictim = (VictimSex == 'M'),
@@ -202,7 +203,12 @@ collisions_cleaned <- collisions_df %>%
     AsianVictim = (VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z')),
     PacificIslanderVictim = (VictimDescent %in% c('P', 'S', 'U')),
     HispanicVictim = (VictimDescent == 'H'),
-    OtherVictim = (VictimDescent %in% c('O', 'X', '', '-'))    
+    OtherVictim = (VictimDescent %in% c('O', 'X', '', '-')),
+    COVIDPeriod = case_when(
+        OccurredYear < 2020 ~ 'Pre-COVID',
+        OccurredYear == 2020 ~ 'During COVID',
+        OccurredYear > 2020 ~ 'Post-COVID'
+      ) %>% factor(levels=c('Pre-COVID', 'During COVID', 'Post-COVID'))
 )
 
 collisions_cleaned %>% write.csv('Cleaned Data/LACollisionsDataCleaned.csv', row.names=FALSE)

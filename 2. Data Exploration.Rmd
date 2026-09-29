@@ -17,259 +17,145 @@ library(forecast)
 library(tseries)
 ```
 
-# Breakdown of Fields
-## Categorical Fields
-Histograms of OccurredTime, AreaKey/AreaName, ReportingDistrict, CrimeCode/CrimeCodeDescription, VictimAge, VictimSex, VictimDescent, PremiseCode/PremiseDescription, Address, CrossStreet; need to make sure I'm correctly tracking what is or isn't a collision
+# Shift in Collision Volume Before/After COVID
+The COVID-19 pandemic and lockdown seems to have had a lasting effect on the number of traffic collisions occuring in LA. We'll explore in later analysis how this is driven by changes in car commuter volume as more workers began to work from home
 ```{r, fig.height=5, fig.width=7}
-for (col in c('OccurredTime', 'AreaKey', 'VictimAge')) {
-  print(
-    collisions_cleaned %>% rename(TargetFeature = as.symbol(col)) %>%
-      ggplot(aes(x=TargetFeature)) +
-      geom_histogram() +
-      ggtitle(paste0(col, ' Distribution'))
-  )
-}
-
-for (col in c('AreaName', 'VictimSex', 'VictimDescent')) {
-  print(
-    collisions_cleaned %>% rename(TargetFeature = as.symbol(col)) %>%
-      ggplot(aes(x=TargetFeature)) +
-      geom_histogram(stat='count') +
-      theme(axis.text.x = element_text(angle = 80, vjust = 0.5, hjust=1)) +
-      ggtitle(paste0(col, ' Distribution'))
-  )
-}
-
-# CrimeCode and CrimeCodeDescription are all the same - Traffic Collision
-
-# No clear concentration of collisions
-print(collisions_cleaned %>% group_by(ReportingDistrict) %>%
-     summarise(Count = n()) %>% arrange(desc(Count)))
-
-# Most common by far is STREET (101)
-print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
-     summarise(Count = n()) %>% arrange(desc(Count)))
-
-# Each PremiseCode only has one PremiseDescription
-print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
-     summarise(Count = n()) %>% ungroup() %>% group_by(PremiseCode) %>% 
-       summarise(Count=n()) %>% arrange(desc(Count)))
-
-# PremiseDecription for 418 is empty, which comes up once; should replace with NA or vice versa
-# Otherwise, each PremiseDescription only has one PremiseCode
-print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
-     summarise(Count = n()) %>% ungroup() %>% group_by(PremiseDescription) %>% 
-       summarise(Count=n()) %>% arrange(desc(Count)))
-print(collisions_cleaned %>% group_by(PremiseCode, PremiseDescription) %>%
-     summarise(Count = n()) %>% filter(PremiseDescription == ''))
-
-# No clear concentration of collisions
-print(collisions_cleaned %>% group_by(Address, CrossStreet) %>%
-     summarise(Count = n()) %>% arrange(desc(Count)))
-
-```
-
-## Time series graphs
-```{r}
-print(collisions_by_reported %>%ggplot(aes(x=ReportedDate, y=Collisions)) +
-    geom_line() + ggtitle('Collisions by Reported Date'))
-print(collisions_by_occurred %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
-    geom_line() + ggtitle('Collisions by Occurred Date'))
-
-print(collisions_by_reported_by_week %>%ggplot(aes(x=ReportedDate, y=Collisions)) +
-    geom_line() + ggtitle('Collisions by Week of Reported Date'))
-print(collisions_by_occurred_by_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
-    geom_line() + ggtitle('Collisions by Week of Occurred Date'))
-```
-
-### Looking at it by week and by area
-```{r, fig.width=10, fig.height=8}
-print(collisions_by_area_and_week %>% ggplot(aes(x=OccurredDate, y=Collisions)) +
-        facet_wrap(~AreaName) + geom_line() +
-        ggtitle('Collisions by Area and Week of Occurred Date'))
-```
-
-### Mean and median occurred time over time
-```{r}
-print(occurred_time_stats_over_time %>% ggplot(aes(x=OccurredDate, y=MeanOccurredTime)) +
-    geom_line() + ggtitle('Mean Collision Time by Week of Occurred Date'))
-
-print(occurred_time_stats_over_time %>% ggplot(aes(x=OccurredDate, y=MedianOccurredTime)) +
-    geom_line() + ggtitle('Median Collision Time by Week of Occurred Date'))
-```
-
-### Occurred time distribution
-```{r}
 print(
-  occurred_time_dist_over_time %>%
-    ggplot(aes(x=RoundedOccurredTime, y=Collisions)) +
-    geom_bar(stat='identity', width=50) +
-    facet_wrap(~Year) +
-    ggtitle('Distribution of Collision Occurrence Time by Year')
+  collisions_cleaned %>% 
+    mutate(OccurredDateRounded = floor_date(OccurredDate, unit='weeks')) %>%
+    group_by(OccurredDateRounded, COVIDPeriod) %>%
+    summarise(Collisions = n(),
+              NumDays = n_distinct(OccurredDate)) %>%
+    filter(NumDays == 7) %>%
+    ggplot(aes(x=OccurredDateRounded, y=Collisions, color=COVIDPeriod)) +
+    geom_line() +
+    labs(x='Week of Occurred Date', y='Number of Collisions', color='') +
+    ggtitle('Influence of COVID Lockdown on Number of Collisions per Week')
+)
+```
+## By area
+```{r, fig.height=8, fig.width=10}
+print(
+  collisions_cleaned %>% 
+    mutate(OccurredDateRounded = floor_date(OccurredDate, unit='months')) %>%
+    group_by(OccurredDateRounded, COVIDPeriod, AreaName) %>%
+    summarise(Collisions = n(),
+              NumDays = n_distinct(OccurredDate)) %>%
+    ggplot(aes(x=OccurredDateRounded, y=Collisions, color=COVIDPeriod)) +
+    geom_line() +
+    facet_wrap(~AreaName) +
+    labs(x='Month of Occurred Date', y='Number of Collisions', color='') +
+    ggtitle('Influence of COVID Lockdown on Number of Collisions by AreaName')
 )
 ```
 
-```{r}
-collisions_by_coordinates_and_year %>% 
-  filter(OccurredYear == local(year),
-         Latitude <= local(34.4),
-         Latitude >= local(33.6),
-         Longitude <= local(-118.125),
-         Longitude >= local(-118.75),
-         )
+
+# OccurredTime - Time of Day of Collision
+## Pre-COVID vs Post-COVID
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(OccurredYear >= 2016) %>%
+    group_by(COVIDPeriod) %>% mutate(TotalCollisions = n()) %>% ungroup() %>%
+    group_by(OccurredTime = floor(OccurredTime/100)*100, COVIDPeriod) %>%
+    summarise(CollisionProportion = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=OccurredTime, y=CollisionProportion, color=COVIDPeriod)) +
+    geom_line() + ylim(0, NA) +
+    labs(x='Collision Occurrence Time', y='Distribution of Collisions', color='') +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+    ggtitle('Distribution of Collision Occurrence Times')
+)
 ```
 
+# Demographic Data
+## Age
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(OccurredYear >= 2016) %>%
+    group_by(COVIDPeriod) %>% mutate(TotalCollisions = n()) %>% ungroup() %>%
+    group_by(VictimAge = floor(VictimAge/5)*5, COVIDPeriod) %>%
+    summarise(CollisionProportion = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=VictimAge, y=CollisionProportion, color=COVIDPeriod)) +
+    geom_line() + ylim(0, NA) +
+    labs(x='Victim Age', y='Distribution of Collisions', color='') +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+    ggtitle('Distribution of Collision Victim Age')
+)
+```
+
+## Sex
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>% 
+    filter(OccurredYear > 2016) %>%
+    mutate(VictimSex = case_when(
+      VictimSex %in% c('M', 'F') ~ VictimSex,
+      TRUE ~ 'Other or Unknown'
+    )) %>%
+    group_by(COVIDPeriod) %>% mutate(TotalCollisions=n()) %>% ungroup() %>%
+    group_by(VictimSex, COVIDPeriod) %>%
+    summarise(CollisionProportion = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=VictimSex, y=CollisionProportion, fill=COVIDPeriod)) +
+    geom_bar(stat='identity', position='dodge') +
+    labs(x='Collision Victim Sex', y='Proportion of Collisions', fill='') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collision Victim Sex')
+)
+```
+
+## Race and Ethnicity
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>% 
+    filter(OccurredYear > 2016) %>%
+    group_by(COVIDPeriod) %>% mutate(TotalCollisions=n()) %>% ungroup() %>%
+    group_by(VictimEthnicity, COVIDPeriod) %>%
+    summarise(CollisionProportion = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=VictimEthnicity, y=CollisionProportion, fill=COVIDPeriod)) +
+    geom_bar(stat='identity', position='dodge') +
+    labs(x='Collision Victim Race/Ethnicity', y='Proportion of Collisions', fill='') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collision Victim Race/Ethnicity')
+)
+```
+
+# By Location
 ## Scatterplot of Latitude, Longitude, 
-```{r, fig.width=6, fig.height=3.5}
-for (year in c(2011:2025)) {
-  print(
-    collisions_by_coordinates_and_year %>%
-      arrange(TotalCollisions) %>% 
-      filter(OccurredYear == local(year),
-             Latitude <= local(34.4),
-             Latitude >= local(33.6),
-             Longitude <= local(-118.125),
-             Longitude >= local(-118.75),
-             ) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
-      geom_point(size=2) +
-      ggtitle(paste0('Total Collisions by Coordinates in ', year, sep=''))
-  )
-}
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_by_coordinates_and_year %>%
+    arrange(TotalCollisions) %>% 
+    filter(Latitude <= local(34.4),
+           Latitude >= local(33.6),
+           Longitude <= local(-118.125),
+           Longitude >= local(-118.75),
+           ) %>%
+    ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
+    geom_point(size=0.5) +
+    facet_wrap(~OccurredYear) +
+    ggtitle(paste0('Total Collisions by Coordinates in ', year, sep=''))
+)
 ```
 
 ```{r, fig.width=6, fig.height=3.5}
 for (year in c(2011:2025)) {
   print(
     collisions_by_coordinates_and_year %>%
-      arrange(AvgCollisionsPerLocation) %>%
+      arrange(StanDevCollisions) %>%
       filter(OccurredYear == local(year),
              Latitude <= local(34.4),
              Latitude >= local(33.6),
              Longitude <= local(-118.125),
              Longitude >= local(-118.75),
              ) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=AvgCollisionsPerLocation)) +
+      ggplot(aes(x=Longitude, y=Latitude, color=StanDevCollisions)) +
       geom_point(size=2) +
       ggtitle(paste0('Avg Collisions Per Location by Coordinates in ', year, sep=''))
   )
 }
 ```
 
-# Forecasting Overall Collision Counts
-## Pre-COVID
-```{r}
-start_time <- c(year(min(collisions_over_time_pre_covid$OccurredDate)), 
-                month(min(collisions_over_time_pre_covid$OccurredDate)))
-
-collisions_pre_covid_ts <- ts(collisions_over_time_pre_covid$Collisions, 
-                    start = start_time, frequency = 52)
-
-train <- head(collisions_pre_covid_ts, round(length(collisions_pre_covid_ts) * 0.8))
-h <- length(collisions_pre_covid_ts) - length(train)
-test <- tail(collisions_pre_covid_ts, h)
-```
-
-```{r}
-collisions_pre_covid_auto_model <- auto.arima(train)
-collisions_pre_covid_auto_model
-```
-
-### Differencing
-```{r}
-train %>% adf.test()
-train %>% ggtsdisplay(main='')
-
-train_dff1 <- train %>% diff()
-train_dff1 %>% adf.test()
-train_dff1 %>% ggtsdisplay(main='')
-```
-
-### AR
-```{r}
-pacf(train_dff1) # 3-4
-```
-### MA
-```{r}
-acf(train_dff1) #2
-```
-### ARIMA
-```{r}
-collisions_pre_covid_model <- Arima(train, order=c(3, 1, 2))
-collisions_pre_covid_model
-```
-
-### Comparing AIC
-```{r}
-exp((collisions_pre_covid_auto_model$aic - collisions_pre_covid_model$aic)/2)
-```
-### Forecast
-```{r}
-forecast_1 <- forecast(collisions_pre_covid_auto_model, h=length(test))
-forecast_2 <- forecast(collisions_pre_covid_model, h=length(test))
-
-autoplot(collisions_pre_covid_ts)
-autoplot(forecast_1)
-autoplot(forecast_2)
-```
-
-## Post-COVID
-```{r}
-start_time <- c(year(min(collisions_over_time_post_covid$OccurredDate)), 
-                month(min(collisions_over_time_post_covid$OccurredDate)))
-
-collisions_post_covid_ts <- ts(collisions_over_time_post_covid$Collisions, 
-                    start = start_time, frequency = 52)
-
-train <- head(collisions_post_covid_ts, round(length(collisions_post_covid_ts) * 0.8))
-h <- length(collisions_post_covid_ts) - length(train)
-test <- tail(collisions_post_covid_ts, h)
-```
-
-```{r}
-collisions_post_covid_auto_model <- auto.arima(train)
-collisions_post_covid_auto_model
-```
-
-### Differencing
-```{r}
-train %>% adf.test()
-train %>% ggtsdisplay(main='')
-
-train_dff1 <- train %>% diff()
-train_dff1 %>% adf.test()
-train_dff1 %>% ggtsdisplay(main='')
-```
-
-### AR
-```{r}
-pacf(train) # 1-2
-```
-### MA
-```{r}
-acf(train) #3
-```
-### ARIMA
-```{r}
-collisions_post_covid_model <- Arima(train, order=c(1, 0, 3))
-collisions_post_covid_model
-```
-
-### Comparing AIC
-```{r}
-exp((collisions_post_covid_auto_model$aic - collisions_post_covid_model$aic)/2)
-```
-### Forecast
-```{r}
-forecast_1 <- forecast(collisions_post_covid_auto_model, h=length(test))
-forecast_2 <- forecast(collisions_post_covid_model, h=length(test))
-
-autoplot(collisions_post_covid_ts)
-autoplot(forecast_1)
-autoplot(forecast_2)
-```
-
-# Identifying Collision Hot Spots
 ## Check the spread of collision statistics
 ```{r}
 print(
@@ -311,3 +197,5 @@ collisions_cleaned %>%
   group_by(Address, CrossStreet, Latitude, Longitude, RoundedLat, RoundedLon) %>% 
   summarise(Collisions = n()) %>% arrange(desc(RoundedLat), desc(RoundedLon))
 ```
+
+

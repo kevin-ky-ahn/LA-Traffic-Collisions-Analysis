@@ -57,58 +57,20 @@ collisions_by_occurred_by_week <- collisions_cleaned %>%
   summarise(Collisions = n())
 ```
 
-```{r}
-collisions_by_week <- collisions_cleaned %>% 
-  group_by(OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
-  summarise(Collisions = n())
-
-collisions_by_area_and_week <- collisions_cleaned %>% 
-  group_by(AreaName, OccurredDate = floor_date(OccurredDate, unit='weeks')) %>% 
-  summarise(Collisions = n())
-
-print_checkpoint_runtime(Sys.time())
-```
-
-### Mean and median occurred time over time
-```{r}
-occurred_time_stats_over_time <- collisions_cleaned %>%
-  group_by(OccurredDate = floor_date(OccurredDate, unit='months')) %>% 
-  summarise(
-    MeanOccurredTime = mean(OccurredTime, na.rm=TRUE),
-    MedianOccurredTime = median(OccurredTime, na.rm=TRUE)
-  )
-```
-
-### Occurred time distribution
-```{r}
-occurred_time_dist_over_time <- collisions_cleaned %>% 
-  mutate(
-    Last2Digits = OccurredTime - floor(OccurredTime/100)*100,
-    RoundedOccurredTime = case_when(
-      Last2Digits >= 45 ~ floor(OccurredTime/100)*100 + 100,
-      Last2Digits >= 15 ~ floor(OccurredTime/100)*100 + 30,
-      TRUE ~ floor(OccurredTime/100)*100
-    ),
-    RoundedOccurredTime = ifelse(RoundedOccurredTime >= 2400, 
-                                 RoundedOccurredTime-2400, RoundedOccurredTime)
-    ) %>% 
-  group_by(Year = year(OccurredDate), RoundedOccurredTime) %>%
-  summarise(Collisions = n())
-```
-
 ## Scatterplot of Latitude, Longitude, 
 ```{r, fig.width=6, fig.height=3.5}
 rounding_factor <- 100
 
 collisions_by_coordinates_and_year <- collisions_cleaned %>% 
-  group_by(Address, CrossStreet, Latitude, Longitude, OccurredYear = year(OccurredDate)) %>% 
+  group_by(Latitude, Longitude, OccurredYear = year(OccurredDate)) %>% 
   summarise(Collisions = n()) %>% 
   group_by(Latitude = floor(Latitude*local(rounding_factor))/local(rounding_factor), 
            Longitude = floor(Longitude*local(rounding_factor))/local(rounding_factor),
            OccurredYear) %>% 
   summarise(TotalCollisions = sum(Collisions),
             AvgCollisionsPerLocation = mean(Collisions, na.rm=TRUE),
-            NumCollisionRecords = n()) %>%
+            StanDevCollisions = sd(Collisions),
+            NumLocations = n()) %>%
   filter(Latitude != 0 | Longitude != 0)
 
 print_checkpoint_runtime(Sys.time())

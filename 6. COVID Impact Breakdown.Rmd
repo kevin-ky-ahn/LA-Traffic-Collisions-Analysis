@@ -19,6 +19,10 @@ options(dplyr.summarise.inform = FALSE)
 options(ggplot2.stat_bin.inform = FALSE)
 ```
 
+# Predicting Injury Severity
+```{r}
+```
+
 # Comparing Intersections to their Neighbors
 ## Cleaning up AreaNames
 ```{r}
