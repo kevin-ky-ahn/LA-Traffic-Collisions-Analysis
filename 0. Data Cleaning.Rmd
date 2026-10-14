@@ -121,7 +121,7 @@ identifying_intersections <- collisions_df %>%
 ```
 
 ```{r}
-collisions_cleaned <- collisions_df %>%
+collisions_cleaned_partial <- collisions_df %>%
   left_join(
     identifying_intersections %>% 
       mutate(CollisionAtIntersection = ifelse(HasCrossStreet %>% is.na(), 0, HasCrossStreet), 
@@ -211,7 +211,7 @@ collisions_cleaned <- collisions_df %>%
       ) %>% factor(levels=c('Pre-COVID', 'During COVID', 'Post-COVID'))
 )
 
-collisions_cleaned %>% write.csv('Cleaned Data/LACollisionsDataCleaned.csv', row.names=FALSE)
+collisions_cleaned_partial %>% write.csv('Cleaned Data/LACollisionsDataCleaned.csv', row.names=FALSE)
 
 file_0_checkpoint_1 <- Sys.time()
 
@@ -476,6 +476,19 @@ all_coordinates <- zip_codes_reindexed %>% mutate(CoordinateType = 'Boundary') %
                             TRUE ~ Backfilled), ZIPCode))
 
 all_coordinates %>% write.csv('Cleaned Data/LACoordinatesByZIPCode.csv', row.names=FALSE)
+```
+
+## Combining with the cleaned collision data
+```{r}
+collisions_cleaned_partial %>% left_join(
+    read.csv('Cleaned Data/LACoordinatesByZIPCode.csv') %>%
+      filter(CoordinateType == 'Collision') %>%
+      rowwise() %>%
+      mutate(ZIPCode = ifelse(Backfilled != Frontfilled, 
+        sample(c(Backfilled, Frontfilled), 1), Backfilled)) %>%
+      select(Latitude, Longitude, ZIPCode), 
+    by=c('Latitude', 'Longitude')
+  ) %>% write.csv('Cleaned Data/LACollisionsDataByZIPCode.csv', row.names=FALSE)
 ```
 
 # Breaking Down Demographics by ZIP Code

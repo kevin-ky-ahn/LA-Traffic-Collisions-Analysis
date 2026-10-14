@@ -83,6 +83,10 @@ print(
     ggtitle('Distribution of Collision Victim Age')
 )
 ```
+```{r}
+collisions_cleaned %>% filter(ZIPCode %>% is.na())
+```
+
 
 ## Sex
 ```{r, fig.height=5, fig.width=7}
@@ -102,6 +106,7 @@ print(
     scale_y_continuous(labels=scales::percent) +
     ggtitle('Distribution of Collision Victim Sex')
 )
+commuting_data_overall
 ```
 
 ## Race and Ethnicity

@@ -34,7 +34,7 @@ print_checkpoint_runtime <- function(current_time) {
 
 # Load the Cleaned Collisions Data
 ```{r}
-collisions_cleaned <- read.csv('Cleaned Data/LACollisionsDataCleaned.csv') %>%
+collisions_cleaned <- read.csv('Cleaned Data/LACollisionsDataByZIPCode.csv') %>%
   mutate(
     ReportedDate = as.Date(ReportedDate, format='%Y-%m-%d'),
     OccurredDate = as.Date(OccurredDate, format='%Y-%m-%d'),
