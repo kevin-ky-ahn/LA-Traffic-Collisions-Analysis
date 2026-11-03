@@ -36,9 +36,10 @@ print_checkpoint_runtime <- function(current_time) {
 ```{r}
 collisions_cleaned <- read.csv('Cleaned Data/LACollisionsDataByZIPCode.csv') %>%
   mutate(
+    COVIDPeriod = COVIDPeriod %>% factor(levels=c('Pre-COVID', 'During COVID', 'Post-COVID')),
     ReportedDate = as.Date(ReportedDate, format='%Y-%m-%d'),
     OccurredDate = as.Date(OccurredDate, format='%Y-%m-%d'),
-  )
+  ) %>% filter(OccurredDate >= '2013-01-01', OccurredDate < '2025-01-01')
 ```
 
 # Breakdown of Fields
@@ -124,39 +125,39 @@ collision_mo_codes <- collisions_cleaned %>%
 # Data for File 4. MO Code Analysis
 ```{r}
 # trying again to round out the intersection areas by name and coordinates
-collisions_at_intersection_areas <- collisions_cleaned %>%
-  filter(Latitude != 0, Longitude != 0) %>%
-  mutate(
-    HasCrossStreet = as.numeric(!is.na(CrossStreet) & !(CrossStreet == '')),
-    NearestIntersection = ifelse(
-      HasCrossStreet,  paste0(Address, ' and ', CrossStreet), Address)) %>%
-  group_by(
-    HasCrossStreet, NearestIntersection,
-    RoundedLat = round(Latitude, 4),
-    RoundedLon = round(Longitude, 4)) %>%
-  summarise(Count = n(), 
-            ProportionListedAsAtIntersection = mean(AtIntersection),
-            ProportionListedAsNotAtIntersection = mean(NotAtIntersection),
-            NumCollisionsAtIntersection = sum(AtIntersection),
-            NumCollisionsNotAtIntersection = sum(NotAtIntersection),
-            ) %>%
-  arrange(desc(Count)) %>%
-  group_by(HasCrossStreet, RoundedLat, RoundedLon) %>%
-  summarise(
-    Collisions = sum(Count),
-    NumIntersections = n(),
-    NumCollisionsAtIntersection = sum(NumCollisionsAtIntersection),
-    NumCollisionsNotAtIntersection = sum(NumCollisionsNotAtIntersection),
-    ProportionListedAsAtIntersection = NumCollisionsAtIntersection/Collisions,
-    ProportionListedAsNotAtIntersection = NumCollisionsNotAtIntersection/Collisions,
-    NearestIntersections = paste(NearestIntersection, collapse=', ')
-  ) %>% 
-  mutate(
-    ListedAsIntersection = as.numeric(ProportionListedAsAtIntersection > 0),
-    ListedAsNotIntersection = as.numeric(ProportionListedAsNotAtIntersection > 0),
-    ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection > 
-                                    ProportionListedAsNotAtIntersection)
-  )
+# collisions_at_intersection_areas <- collisions_cleaned %>%
+#   filter(Latitude != 0, Longitude != 0) %>%
+#   mutate(
+#     HasCrossStreet = as.numeric(!is.na(CrossStreet) & !(CrossStreet == '')),
+#     NearestIntersection = ifelse(
+#       HasCrossStreet,  paste0(Address, ' and ', CrossStreet), Address)) %>%
+#   group_by(
+#     HasCrossStreet, NearestIntersection,
+#     RoundedLat = round(Latitude, 4),
+#     RoundedLon = round(Longitude, 4)) %>%
+#   summarise(Count = n(), 
+#             ProportionListedAsAtIntersection = mean(AtIntersection),
+  #           ProportionListedAsNotAtIntersection = mean(NotAtIntersection),
+  #           NumCollisionsAtIntersection = sum(AtIntersection),
+  #           NumCollisionsNotAtIntersection = sum(NotAtIntersection),
+  #           ) %>%
+  # arrange(desc(Count)) %>%
+  # group_by(HasCrossStreet, RoundedLat, RoundedLon) %>%
+  # summarise(
+  #   Collisions = sum(Count),
+  #   NumIntersections = n(),
+  #   NumCollisionsAtIntersection = sum(NumCollisionsAtIntersection),
+  #   NumCollisionsNotAtIntersection = sum(NumCollisionsNotAtIntersection),
+  #   ProportionListedAsAtIntersection = NumCollisionsAtIntersection/Collisions,
+  #   ProportionListedAsNotAtIntersection = NumCollisionsNotAtIntersection/Collisions,
+  #   NearestIntersections = paste(NearestIntersection, collapse=', ')
+  # ) %>% 
+  # mutate(
+  #   ListedAsIntersection = as.numeric(ProportionListedAsAtIntersection > 0),
+  #   ListedAsNotIntersection = as.numeric(ProportionListedAsNotAtIntersection > 0),
+  #   ListedMoreAsAtIntersection = (ProportionListedAsAtIntersection > 
+  #                                   ProportionListedAsNotAtIntersection)
+  # )
 
 print_checkpoint_runtime(Sys.time())
 ```
@@ -188,47 +189,48 @@ collisions_by_object <- collisions_cleaned %>%
   ) %>% 
   rbind(
     collisions_cleaned %>%
+      filter(CollisionWithMotorcycle) %>%
+      mutate(CollisionObject = 'Motorcycle')
+  ) %>% 
+  rbind(
+    collisions_cleaned %>%
       filter(CollisionWithOtherObject) %>%
       mutate(CollisionObject = 'Other') 
   ) %>% 
   select(CollisionObject, OccurredDate, OccurredYear, Latitude, Longitude, 
          CollisionAtIntersection, InjuryInvolved, MostSevereInjuryReported,
-         NonInjury, ComplaintOfInjury, VisibleInjury, SevereInjury, FatalInjury)
+         NonInjury, ComplaintOfInjury, VisibleInjury, SevereInjury, FatalInjury) %>%
+  mutate(CollisionObject = factor(CollisionObject, levels=c('Bike', 'Fixed Object', 'Motorcycle',
+                                                             'Parked Vehicle', 'Pedestrian',
+                                                             'Vehicle', 'Other')))
 
 print_checkpoint_runtime(Sys.time())
 ```
 
 # Defining Functions for Future Analysis
 ```{r}
-intro_graphs <- function(graph_data, field_name, label=field_name, year=2024, text_size=5) {
+intro_graphs <- function(graph_data, field_name, label=field_name, text_size=11) {
   # rename column
-  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
+  graph_data <- graph_data %>% 
+    rename(TargetFeature = as.symbol(local(field_name)))
   
   # histogram
-  if (local(year) == 'all') {
-    print(graph_data %>%
-            filter(OccurredDate >= '2013-01-01',
-                   OccurredDate < '2025-01-01') %>%
-            group_by(TargetFeature) %>%
-            summarise(Collisions = n()) %>%
-            ggplot(aes(x=TargetFeature, y=Collisions, fill=TargetFeature)) +
-            geom_bar(stat='identity') +
-            theme_set(theme_gray(base_size = text_size)) +
-            theme(axis.text.x = element_blank()) +
-            labs(x=local(label), y='Collisions', fill=local(label)) +
-            ggtitle(paste('Number of Collisions by ', label, ', 2013-2024', sep='')))
-  } else {
-    print(graph_data %>%
-            filter(OccurredYear == local(year)) %>%
-            group_by(TargetFeature) %>%
-            summarise(Collisions = n()) %>%
-            ggplot(aes(x=TargetFeature, y=Collisions, fill=TargetFeature)) +
-            geom_bar(stat='identity') +
-            theme_set(theme_gray(base_size = text_size)) +
-            theme(axis.text.x = element_blank()) +
-            labs(x=local(label), y='Collisions', fill=local(label)) +
-            ggtitle(paste('Number of Collisions by ', label, ', ', year, sep='')))
-  }
+  print(graph_data %>%
+          filter(OccurredYear != 2020, OccurredYear >= 2016) %>%
+          group_by(COVIDPeriod) %>%
+          mutate(TotalCollisions = n()) %>% ungroup() %>%
+          group_by(COVIDPeriod, TargetFeature) %>%
+          summarise(Collisions = n(),
+                    Proportion = Collisions/first(TotalCollisions)) %>%
+          ggplot(aes(x=TargetFeature, y=Proportion, fill=TargetFeature)) +
+          geom_bar(stat='identity') +
+          theme_set(theme_gray(base_size = text_size)) +
+          theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+          labs(x=local(label), y='Proportion of Collisions', fill='') +
+          scale_y_continuous(labels = scales::percent) +
+          facet_wrap(~COVIDPeriod) +
+          ggtitle(paste('Distribution of Collisions by ', label, sep=''),
+                  subtitle='Pre- vs Post-COVID'))
   
   # number over time
   print(graph_data %>%
@@ -238,7 +240,7 @@ intro_graphs <- function(graph_data, field_name, label=field_name, year=2024, te
           summarise(Collisions = n()) %>%
           ggplot(aes(x=OccurredDate, y=Collisions, color=TargetFeature)) +
           geom_line() +
-          labs(x='Date of Collisions', y='Collisions', color=local(label)) +
+          labs(x='Date of Collisions', y='Collisions', color='') +
           theme_set(theme_gray(base_size = text_size)) +
           ggtitle(paste('Number of Collisions over Time by', label)))
   
@@ -252,27 +254,18 @@ intro_graphs <- function(graph_data, field_name, label=field_name, year=2024, te
           summarise(Proportion = n()/first(TotalCollisions)) %>%
           ggplot(aes(x=OccurredDate, y=Proportion, color=TargetFeature)) +
           geom_line() +
-          labs(x='Date of Collisions', y='Proportion of Collisions', color=local(label)) + 
+          labs(x='Date of Collisions', y='Proportion of Collisions', color='') + 
           scale_y_continuous(labels = scales::percent) +
           theme_set(theme_gray(base_size = text_size)) +
           ggtitle(paste('Proportion of Collisions over Time by', label)))
 }
 
-mapping_hotspots <- function(graph_data, field_name, label=field_name,
-                             year='all', high_percentile=95, text_size=5, dot_size=1) {
+mapping_hotspots <- function(graph_data, field_name, label=field_name, 
+                             high_percentile=95, text_size=11, dot_size=2) {
   # rename column
-  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
-  
-  if (year != 'all') {
-    graph_data <- graph_data %>% filter(OccurredYear == local(year))
-    collision_threshold <- 10
-    year_label <- year
-  } else {
-    graph_data <- graph_data %>% filter(OccurredDate >= '2013-01-01', 
-                                        OccurredDate < '2025-01-01')
-    collision_threshold <- 50
-    year_label <- '2013-2024'
-  }
+  graph_data <- graph_data %>% 
+    filter(OccurredYear != 2020, OccurredYear >= 2016) %>%
+    rename(TargetFeature = as.symbol(local(field_name)))
   
   grouped_data <- graph_data %>%
     filter(CollisionAtIntersection == 1,
@@ -290,6 +283,7 @@ mapping_hotspots <- function(graph_data, field_name, label=field_name,
            RateNTile = ntile(TargetFeatureRate, 100)) %>%
     ungroup()
   
+  count_regression <- lm(TargetFeatureCount ~ Collisions, data=grouped_data)
   count_percentile <- (feature_percentiles %>% 
                         filter(CountNTile == local(high_percentile)) %>% 
                         summarise(Threshold = min(TargetFeatureCount)))$Threshold[1]
@@ -297,17 +291,18 @@ mapping_hotspots <- function(graph_data, field_name, label=field_name,
                         filter(RateNTile == local(high_percentile)) %>% 
                         summarise(Threshold = min(TargetFeatureRate)))$Threshold[1]
 
-  # histogram of collisions by intersection
+  # scatterplor of collisions by intersection
   print(
     grouped_data %>%
       arrange(desc(TargetFeatureCount)) %>%
-      ggplot(aes(x=TargetFeatureCount)) +
-      geom_histogram(bins=25) +
-      geom_vline(xintercept=local(count_percentile), linetype='dashed') +
+      ggplot(aes(x=Collisions, y=TargetFeatureCount)) + geom_point() + 
+      geom_abline(intercept=local(coefficients(count_regression))[1], 
+                  slope=local(coefficients(count_regression))[2], linetype='dashed') +
       labs(x=paste('Collisions Involving ', label, sep=''), y='Number of Intersections') +
       theme_set(theme_gray(base_size = text_size)) +
       ggtitle(paste('Number of Collisions Involving ', label, ' by Intersection, ', year_label, sep=''),
-              subtitle=paste(high_percentile, 'th Percentile: ', count_percentile, ' Collisions', sep=''))
+              subtitle=paste('Average rate of  ', label, ' per collision: ', 
+                             round(local(coefficients(count_regression))[2], 4), sep=''))
   )
   
   # histogram of rates by intersection
@@ -345,56 +340,91 @@ mapping_hotspots <- function(graph_data, field_name, label=field_name,
   )
 }
 
-graphing_injury_rates <- function(graph_data, field_name, label1=field_name,
-                                  label2=label1, year=2024, text_size=5) {
+graphing_variable_distributions <- function(graph_data, field1, field2, label1=field1, label2=field2, text_size=11) {
   # rename column
-  graph_data <- graph_data %>% rename(TargetFeature = as.symbol(local(field_name)))
+  graph_data <- graph_data %>% 
+    filter(OccurredYear != 2020, OccurredYear >= 2016) %>%
+    rename(TargetFeature1 = as.symbol(local(field1)),
+           TargetFeature2 = as.symbol(local(field2)))
 
-  if (year != 'all') {
-    graph_data <- graph_data %>% filter(OccurredYear == local(year))
-    year_label <- year
-  } else {
-    graph_data <- graph_data %>% filter(OccurredDate >= '2013-01-01', 
-                                        OccurredDate < '2025-01-01')
-    year_label <- '2013-2024'
-  }
-  
-  ## proportion of hit and run severity by injury outcome
+  ## distribution of injury type by feature, pre-COVID
   print(
     graph_data %>%
-      group_by(TargetFeature) %>%
+      filter(COVIDPeriod == 'Pre-COVID') %>%
+      group_by(TargetFeature1) %>%
       mutate(TotalCollisions = n()) %>% ungroup() %>%
-      group_by(TargetFeature, MostSevereInjuryReported) %>%
+      group_by(TargetFeature1, TargetFeature2) %>%
       summarise(Proportion = n()/first(TotalCollisions)) %>%
-      ggplot(aes(x=TargetFeature, y=Proportion, fill=TargetFeature)) +
+      ggplot(aes(x=TargetFeature2, y=Proportion, fill=TargetFeature2)) +
       geom_bar(stat='identity', position='dodge') +
-      labs(x='', y='Proportion of Collisions', fill=label1) +
-      scale_y_continuous(labels = scales::percent) +
-      facet_wrap(~MostSevereInjuryReported) +
+      labs(x='', y='Proportion of Collisions', fill=label2) +
+      scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+      facet_wrap(~TargetFeature1) +
       theme_set(theme_gray(base_size = text_size)) +
-      theme(axis.text.x = element_blank()) +
-      ggtitle(paste('Distribution of Injury Outcomes by ', label1, ', ', year_label, sep=''))
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+      ggtitle(paste('Distribution of ', label2, ' by ', label1, sep=''),
+              subtitle='Pre-COVID')
   )
   
-  ## proportion of injury outcome by hit and run severity
+  ## distribution of injury type by feature, post-COVID
   print(
     graph_data %>%
-      group_by(MostSevereInjuryReported) %>%
+      filter(COVIDPeriod == 'Post-COVID') %>%
+      group_by(TargetFeature1) %>%
       mutate(TotalCollisions = n()) %>% ungroup() %>%
-      group_by(TargetFeature, MostSevereInjuryReported) %>%
+      group_by(TargetFeature1, TargetFeature2) %>%
       summarise(Proportion = n()/first(TotalCollisions)) %>%
-      ggplot(aes(x=TargetFeature, y=Proportion, fill=TargetFeature)) +
+      ggplot(aes(x=TargetFeature2, y=Proportion, fill=TargetFeature2)) +
+      geom_bar(stat='identity', position='dodge') +
+      labs(x='', y='Proportion of Collisions', fill=label2) +
+      scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+      facet_wrap(~TargetFeature1) +
+      theme_set(theme_gray(base_size = text_size)) +
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+      ggtitle(paste('Distribution of ', label2, ' by ', label1, sep=''),
+              subtitle='Post-COVID')
+  )
+  
+  ## distribution of feature by injury type, pre-COVID
+  print(
+    graph_data %>%
+      filter(COVIDPeriod == 'Pre-COVID') %>%
+      group_by(TargetFeature2) %>%
+      mutate(TotalCollisions = n()) %>% ungroup() %>%
+      group_by(TargetFeature1, TargetFeature2) %>%
+      summarise(Proportion = n()/first(TotalCollisions)) %>%
+      ggplot(aes(x=TargetFeature1, y=Proportion, fill=TargetFeature1)) +
       geom_bar(stat='identity', position = position_dodge2(width = 0.9, preserve = "single")) +
       labs(x='', y='Proportion of Collisions', fill=label1) +
-      scale_y_continuous(labels = scales::percent) +
-      facet_wrap(~MostSevereInjuryReported) +
+      scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+      facet_wrap(~TargetFeature2) +
       theme_set(theme_gray(base_size = text_size)) +
-      theme(axis.text.x = element_blank()) +
-      ggtitle(paste('Distribution of ', label2, ' Causes by Injury Severity, ', year_label, sep=''))
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+      ggtitle(paste('Distribution of ', label1, ' Causes by ', label2, sep=''),
+              subtitle='Pre-COVID')
+  )
+  
+  ## distribution of feature by injury type, pre-COVID
+  print(
+    graph_data %>%
+      filter(COVIDPeriod == 'Post-COVID') %>%
+       group_by(TargetFeature2) %>%
+      mutate(TotalCollisions = n()) %>% ungroup() %>%
+      group_by(TargetFeature1, TargetFeature2) %>%
+      summarise(Proportion = n()/first(TotalCollisions)) %>%
+      ggplot(aes(x=TargetFeature1, y=Proportion, fill=TargetFeature1)) +
+      geom_bar(stat='identity', position = position_dodge2(width = 0.9, preserve = "single")) +
+      labs(x='', y='Proportion of Collisions', fill=label1) +
+      scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+      facet_wrap(~TargetFeature2) +
+      theme_set(theme_gray(base_size = text_size)) +
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+      ggtitle(paste('Distribution of ', label1, ' Causes by ', label2, sep=''),
+              subtitle='Post-COVID')
   )
 }
 
-print_checkpoint_runtime(Sys.time())
+  print_checkpoint_runtime(Sys.time())
 ```
 
 # Tracking Number of MOCodes over Time
@@ -403,13 +433,6 @@ mo_code_descriptions <- read.csv('Data/MOCodes.csv') %>%
   mutate(Description = substring(MOCode, 6),
          MOCode = as.numeric(substring(MOCode, 1, 4)))
 
-num_mo_codes <- collisions_cleaned %>% 
-  mutate(MOCode = str_replace(MOCodes, ' ', ', ')) %>%
-  separate_rows(MOCode, convert=TRUE) 
-  group_by(DRKey) %>% summarise(NumMOCodes = n_distinct(MOCode))
-```
-
-```{r}
 collision_mo_codes_labeled <- collision_mo_codes %>% 
   filter(!is.na(MOCode)) %>%
   left_join(
@@ -419,25 +442,25 @@ collision_mo_codes_labeled <- collision_mo_codes %>%
       mutate(Rank=row_number()) %>% select(-TotalCollisions), by='MOCode') %>%
   left_join(mo_code_descriptions, by='MOCode')
 
-collision_mo_codes_pre_post_covid <- collision_mo_codes_labeled %>%
-  filter(OccurredDate < '2020-01-01' | OccurredDate >= '2021-01-01') %>%
-  mutate(TimePeriod = ifelse(OccurredDate < '2020-01-01', 'Pre-COVID', 'Post-COVID'),
-         PreCOVIDCollision = ifelse(TimePeriod == 'Pre-COVID', DRKey, NA),
-         PostCOVIDCollision = ifelse(TimePeriod == 'Post-COVID', DRKey, NA)) %>%
-  group_by(1) %>%
-  mutate(
-    TotalPreCOVIDCollisions = n_distinct(PreCOVIDCollision),
-    TotalPostCOVIDCollisions = n_distinct(PostCOVIDCollision)
-  ) %>% ungroup() %>%
-  mutate(Description = ifelse(Rank > 20, 'Other', Description)) %>%
-  group_by(Description) %>%
-  summarise(
-    PreCOVIDCollisions = n_distinct(PreCOVIDCollision),
-    PostCOVIDCollisions = n_distinct(PostCOVIDCollision),
-    ProportionPreCOVID = PreCOVIDCollisions/first(TotalPreCOVIDCollisions),
-    ProportionPostCOVID = PostCOVIDCollisions/first(TotalPostCOVIDCollisions),
-    ChangeInProportion = ProportionPostCOVID - ProportionPreCOVID
-  )
+# collision_mo_codes_pre_post_covid <- collision_mo_codes_labeled %>%
+#   filter(OccurredDate < '2020-01-01' | OccurredDate >= '2021-01-01') %>%
+#   mutate(TimePeriod = ifelse(OccurredDate < '2020-01-01', 'Pre-COVID', 'Post-COVID'),
+#          PreCOVIDCollision = ifelse(TimePeriod == 'Pre-COVID', DRKey, NA),
+#          PostCOVIDCollision = ifelse(TimePeriod == 'Post-COVID', DRKey, NA)) %>%
+#   group_by(1) %>%
+#   mutate(
+#     TotalPreCOVIDCollisions = n_distinct(PreCOVIDCollision),
+#     TotalPostCOVIDCollisions = n_distinct(PostCOVIDCollision)
+#   ) %>% ungroup() %>%
+#   mutate(Description = ifelse(Rank > 20, 'Other', Description)) %>%
+#   group_by(Description) %>%
+#   summarise(
+#     PreCOVIDCollisions = n_distinct(PreCOVIDCollision),
+#     PostCOVIDCollisions = n_distinct(PostCOVIDCollision),
+#     ProportionPreCOVID = PreCOVIDCollisions/first(TotalPreCOVIDCollisions),
+#     ProportionPostCOVID = PostCOVIDCollisions/first(TotalPostCOVIDCollisions),
+#     ChangeInProportion = ProportionPostCOVID - ProportionPreCOVID
+#   )
 
 print_checkpoint_runtime(Sys.time())
 ```
@@ -469,7 +492,10 @@ collisions_mo_code_conflicts <- collisions_cleaned %>%
       ConflictingCityProperty == 1 | ConflictingPrivateProperty == 1 |
       ConflictingDUI == 1 | ConflictingHitAndRun == 1 | 
       ConflictingInjury == 1 | ConflictingRegion == 1 |
-      ConflictingPCF == 1 | ConflictingLocation == 1
+      ConflictingPCF == 1 | ConflictingLocation == 1,
+    IncompleteMOCodes = MostSevereInjuryReported == 'Unspecified' |
+      MostVulnerableCollisionObject == 'Unspecified' | 
+      (!AtIntersection & !NotAtIntersection)
   )
 
 print_checkpoint_runtime(Sys.time())
@@ -478,260 +504,273 @@ print_checkpoint_runtime(Sys.time())
 # Data for File 5. Demographic Trends
 # Census data
 ```{r}
-census_data <- read.csv('Cleaned Data/LACensusDataOverall.csv')
+census_data <- read.csv('Cleaned Data/LAGeneralDemographicsByZIPCode.csv')
+```
+
+```{r}
+api_data_renames <- read.csv('Cleaned Data/APIDataFieldNameTranslations.csv')
+
+census_data_long_by_zip <- census_data %>% pivot_longer(
+  colnames(census_data)[3:dim(census_data)[2]], names_to='FieldName', values_to='Population'
+) %>% left_join(api_data_renames, by='FieldName') %>% 
+  group_by(Year, ZIPCode, DemographicType, Demographic) %>% 
+  summarise(Population = sum(Population, na.rm=TRUE)) %>%
+  mutate(CountPopulation = ifelse(Demographic %in% c('Male', 'Female'), Population, 0)) %>%
+  group_by(Year, ZIPCode) %>% mutate(TotalPopulation = sum(CountPopulation)) %>% ungroup() %>%
+  select(Year, ZIPCode, DemographicType, Demographic, Population, TotalPopulation)
+
+census_data_overall_long <- census_data_long_by_zip %>% 
+  group_by(Year, DemographicType, Demographic) %>% 
+  summarise(Population = sum(Population, na.rm=TRUE),
+            TotalPopulation = sum(TotalPopulation, na.rm=TRUE))
 ```
 
 # Commutes over Time
 ## Commuting shifts after COVID
 ```{r}
-commuting_data_overall <- read.csv('Cleaned Data/LACommutingDataOverall.csv')
-commuting_data_by_ethnicity <- read.csv('Cleaned Data/LACommutingDataByEthnicity.csv')
+commuting_data <- read.csv('Cleaned Data/LACommutingDataGeneralAndSexByZIPCode.csv')
 
-commuting_by_covid_period <- commuting_data_by_ethnicity %>%
-  filter(Year >= 2016, Year != 2020) %>%
-  mutate(Period = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID') %>%
-           factor(levels = c('Pre-COVID', 'Post-COVID'))) %>%
-  group_by(Period, RaceEthnicity) %>%
-  summarise(
-    AvgWorkersPerYear = mean(TotalWorkers) %>% round(),
-    AvgCommutingByCar = mean(Driving + Carpooling) %>% round(),
-    AvgCommutingByPublicTransit = mean(PublicTransit) %>% round(),
-    AvgCommutingByWalking = mean(Walking) %>% round(),
-    AvgCommutingByTaxiBikeAndOther = mean(TaxiBikeAndOther) %>% round(),
-    AvgWorkFromHome = mean(WorkingFromHome) %>% round(),
-    
-    CommutingByCarRate = round(AvgCommutingByCar/AvgWorkersPerYear, 2),
-    CommutingByPublicTransitRate = round(AvgCommutingByPublicTransit/AvgWorkersPerYear, 2),
-    CommutingByWalkingRate = round(AvgCommutingByWalking/AvgWorkersPerYear, 2),
-    CommutingByTaxiBikeAndOtherRate = round(AvgCommutingByTaxiBikeAndOther/AvgWorkersPerYear, 2),
-    WFHRate = round(AvgWorkFromHome/AvgWorkersPerYear, 2),
-  )
+commuting_data_long_by_zip <- commuting_data %>%
+  pivot_longer(colnames(commuting_data)[3:dim(commuting_data)[2]], 
+               names_to='FieldName', values_to='Commuters') %>%
+  left_join(api_data_renames, by='FieldName') %>% 
+  mutate(CountCommuters = ifelse(
+    !(CommuterType %in% c('Approximate Number of Cars', 'Non-Car', 'Total')) &
+      Demographic == 'Total Population', Commuters, 0)) %>%
+  group_by(Year, ZIPCode) %>% mutate(TotalCommuters = sum(CountCommuters, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Commuters, Demographic, DemographicType,
+                       CommuterType, CommuterTypeGroup, TotalCommuters)
 
-print_checkpoint_runtime(Sys.time())
+commuting_data_long <- commuting_data_long_by_zip %>% 
+  filter(Demographic == 'Total Population') %>%
+  group_by(Year, CommuterType) %>%
+  summarise(Commuters = sum(Commuters, na.rm=TRUE),
+            TotalCommuters = sum(TotalCommuters, na.rm=TRUE))
+
+commuting_data_by_sex_long_by_zip <- commuting_data_long_by_zip %>% 
+  filter(Demographic != 'Total Population', CommuterType != 'Total') %>%
+  mutate(CountCommuters = ifelse(
+    !(CommuterType %in% c('Approximate Number of Cars', 'Non-Car')), Commuters, 0)) %>%
+  group_by(Year, Demographic, ZIPCode) %>% 
+  mutate(DemographicCommuters = sum(CountCommuters, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Commuters, Demographic, CommuterType, 
+                       CommuterTypeGroup, DemographicCommuters, TotalCommuters)
+
+commuting_data_by_sex_long <- commuting_data_by_sex_long_by_zip %>%
+  group_by(Year, Demographic, CommuterType) %>%
+  summarise(Commuters = sum(Commuters, na.rm=TRUE),
+            TotalCommuters = sum(TotalCommuters, na.rm=TRUE),
+            DemographicCommuters = sum(DemographicCommuters, na.rm=TRUE))
+  
 ```
 
-## Comparing number of collision victims by ethnicity, compared to WFH rate
 ```{r}
-collisions_by_ethnicity <- collisions_cleaned %>%
-  mutate(
-    VictimEthnicity = case_when(
-      VictimDescent == 'H' ~ 'Hispanic',
-      VictimDescent %in% c('A', 'C', 'D', 'F', 'G', 'J', 'K', 'L', 'V', 'Z') ~ 'Asian',
-      VictimDescent %in% c('P', 'S', 'U') ~ 'Pacific Islander',
-      VictimDescent == 'B' ~ 'Black',
-      VictimDescent == 'W' ~ 'White',
-      VictimDescent %in% c('O', 'X', '', '-') ~ 'Other',
-      VictimDescent == 'I' ~ 'Native American/Alaskan',
-      TRUE ~ '?'    )
-  ) %>%
-  group_by(OccurredYear, VictimEthnicity) %>%
-  summarise(Collisions = n()) %>%
-  right_join(commuting_data_by_ethnicity, 
-             by=c('VictimEthnicity'='RaceEthnicity', 'OccurredYear'='Year')) %>%
-  right_join(census_data %>% filter(DemographicType == 'RaceEthnicity'),
-             by=c('VictimEthnicity'='Demographic', 'OccurredYear'='Year')) %>%
-  mutate(
-    Car = Driving + Carpooling,
-    DrivingProportion = Car/TotalWorkers,
-    WalkingProportion = Walking/TotalWorkers,
-    PublicTransitProportion = PublicTransit/TotalWorkers,
-    WFHProportion = WorkingFromHome/TotalWorkers,
-    CollisionRate = Collisions/Population)
+commuting_data_by_age <- read.csv('Cleaned Data/LACommutingDataAgeByZIPCode.csv')
+commuting_data_by_ethnicity <- read.csv('Cleaned Data/LACommutingDataRaceEthnicityByZIPCode.csv')
 
-print_checkpoint_runtime(Sys.time())
+commuting_data_by_age_long_by_zip <- commuting_data_by_age %>%
+  pivot_longer(colnames(commuting_data_by_age)[3:dim(commuting_data_by_age)[2]], 
+               names_to='FieldName', values_to='Commuters') %>%
+  left_join(api_data_renames, by='FieldName') %>% 
+  mutate(CountCommuters = ifelse(
+    !(CommuterType %in% c('Approximate Number of Cars', 'Non-Car')), Commuters, 0)) %>%
+  group_by(Year, Demographic, ZIPCode) %>% mutate(DemographicCommuters = sum(CountCommuters, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Commuters, Demographic, CommuterType, 
+                       CommuterTypeGroup, DemographicCommuters)
+  
+commuting_data_by_age_long <- commuting_data_by_age_long_by_zip %>%
+  group_by(Year, Demographic, CommuterType) %>%
+  summarise(Commuters = sum(Commuters, na.rm=TRUE),
+            DemographicCommuters = sum(DemographicCommuters, na.rm=TRUE))
+
+commuting_data_by_ethnicity_long_by_zip <- commuting_data_by_ethnicity %>%
+  pivot_longer(colnames(commuting_data_by_ethnicity)[3:dim(commuting_data_by_ethnicity)[2]], 
+               names_to='FieldName', values_to='Commuters') %>%
+  left_join(api_data_renames, by='FieldName') %>% 
+  mutate(CountCommuters = ifelse(
+    !(CommuterType %in% c('Approximate Number of Cars', 'Non-Car')), Commuters, 0)) %>%
+  group_by(Year, Demographic, ZIPCode) %>% mutate(DemographicCommuters = sum(CountCommuters, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Commuters, Demographic, CommuterType, 
+                       CommuterTypeGroup, DemographicCommuters)
+  
+commuting_data_by_ethnicity_long <- commuting_data_by_ethnicity_long_by_zip %>%
+  group_by(Year, Demographic, CommuterType) %>%
+  summarise(Commuters = sum(Commuters, na.rm=TRUE),
+            DemographicCommuters = sum(DemographicCommuters, na.rm=TRUE))
 ```
 
-# Parsing ZIP Codes
+# Occupations over Time
+## Occupation shifts after COVID
 ```{r}
-all_coordinates <- read.csv('Cleaned Data/LACoordinatesByZIPCode.csv')
+occupations_data <- read.csv('Cleaned Data/LAWorkerOccupationsOverallByZIPCode.csv')
+occupations_data_by_ethnicity <- read.csv('Cleaned Data/LAWorkerOccupationsRaceEthnicityByZIPCode.csv')
 
-relevant_zip_codes <- (all_coordinates %>% group_by(ZIPCode) %>% 
-  summarise(NumCollisionPoints = sum(IsCollisionPoint)) %>%
-  filter(NumCollisionPoints > 0) %>% ungroup() %>%
-  select(ZIPCode))$ZIPCode
+occupations_data_long_by_zip <- occupations_data %>%
+  pivot_longer(colnames(occupations_data)[3:dim(occupations_data)[2]], 
+               names_to='FieldName', values_to='Workers') %>%
+  left_join(api_data_renames, by='FieldName') %>% 
+  mutate(CountWorkers = ifelse(grepl('Industry', FieldName), Workers, 0)) %>%
+  group_by(Year, ZIPCode) %>% mutate(TotalWorkers = sum(CountWorkers, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Workers, Demographic, 
+                       WorkerType, WorkerIndustryType, WorkerClassType, TotalWorkers)
 
-conflicted_coordinates <- all_coordinates %>%
-  filter(CoordinateType == 'Collision',
-         Backfilled != Frontfilled) %>%
-  group_by(Backfilled, Frontfilled) %>% 
-  summarise(1)
+occupations_data_long <- occupations_data_long_by_zip %>%
+  group_by(Year, WorkerType, WorkerIndustryType, WorkerClassType) %>%
+  summarise(Workers = sum(Workers, na.rm=TRUE),
+            TotalWorkers = sum(TotalWorkers, na.rm=TRUE))
 
-print_checkpoint_runtime(Sys.time())
+occupations_data_by_ethnicity_long_by_zip <- occupations_data_by_ethnicity %>%
+  pivot_longer(colnames(occupations_data_by_ethnicity)[3:dim(occupations_data_by_ethnicity)[2]], 
+               names_to='FieldName', values_to='Workers') %>%
+  left_join(api_data_renames, by='FieldName') %>% 
+  filter(WorkerType != '') %>%
+  group_by(Year, Demographic, ZIPCode) %>% mutate(DemographicWorkers = sum(Workers, na.rm=TRUE)) %>%
+  ungroup() %>% select(Year, ZIPCode, FieldName, Workers, Demographic, WorkerType, DemographicWorkers)
+
+occupations_data_by_ethnicity_long <- occupations_data_by_ethnicity_long_by_zip %>%
+  group_by(Year, Demographic, WorkerType) %>%
+  summarise(Workers = sum(Workers, na.rm=TRUE),
+            DemographicWorkers = sum(DemographicWorkers, na.rm=TRUE))
 ```
 
 # Breaking Down Demographics by ZIP Code
 ```{r}
-census_by_zip <- read.csv('Cleaned Data/LACensusDataByZIP.csv')
-commuting_by_zip <- read.csv('Cleaned Data/LACommutingDataByZIP.csv')
-```
-
-```{r}
-census_by_zip_pivoted <- census_by_zip %>%
-  mutate(LabelGroup = case_when(
-    LabelGroup1 == 'RACE' & LabelGroup2 == 'ONE RACE' ~ case_when(
-      LabelGroup3 == 'BLACK OR AFRICAN AMERICAN' ~ 'BLACK',
-      LabelGroup3 == 'AMERICAN INDIAN AND ALASKA NATIVE' ~ 'INDIGENOUS',
-      LabelGroup3 == 'NATIVE HAWAIIAN AND OTHER PACIFIC ISLANDER' ~ 'PACIFIC ISLANDER',
-      LabelGroup3 == 'SOME OTHER RACE' ~ 'OTHER',
-      TRUE ~ LabelGroup3),
-    LabelGroup1 == 'HISPANIC OR LATINO AND RACE' & 
-      LabelGroup2 == 'NOT HISPANIC OR LATINO' ~ case_when(
-        LabelGroup3 == 'BLACK OR AFRICAN AMERICAN ALONE' ~ 'BLACK ALONE',
-        LabelGroup3 == 'AMERICAN INDIAN AND ALASKA NATIVE ALONE' ~ 'INDIGENOUS ALONE',
-        LabelGroup3 == 'NATIVE HAWAIIAN AND OTHER PACIFIC ISLANDER ALONE' ~ 'PACIFIC ISLANDER ALONE',
-        LabelGroup3 == 'SOME OTHER RACE ALONE' ~ 'OTHER ALONE',
-        LabelGroup3 == 'TWO OR MORE RACES' ~ 'TWO OR MORE RACES ALONE',
-        TRUE ~ LabelGroup3),
-    LabelGroup1 == 'HISPANIC OR LATINO AND RACE' ~ 'HISPANIC',
-    TRUE ~ LabelGroup2) %>% str_to_title() %>% 
-        str_replace_all(' To ', ' to ') %>% str_replace_all(' ', '')
-  ) %>% select(Year, ZIP, LabelGroup, Population) %>% 
-  # filter(LabelGroup != 'TwoOrMoreRaces', LabelGroup != 'TwoOrMoreRacesAlone') %>%
-  group_by(Year, ZIP, LabelGroup) %>% summarise(Population = first(Population)) %>% ungroup() %>%
-  pivot_wider(names_from=LabelGroup, values_from=Population) %>%
-  mutate(TotalPopulation = Male + Female) %>%
-  select(Year, ZIP, TotalPopulation, Female, Male, Hispanic, White, Asian, Black, 
-         Indigenous, PacificIslander, TwoOrMoreRaces, Other, WhiteAlone, 
-         AsianAlone, BlackAlone, IndigenousAlone, PacificIslanderAlone,
-         TwoOrMoreRacesAlone, OtherAlone, Under5Years, `5to9Years`, everything())
-
-print_checkpoint_runtime(Sys.time())
-```
-
-```{r}
-commuting_by_zip_pivoted <- commuting_by_zip %>%
-  mutate(LabelGroup = case_when(
-    LabelGroup3 == 'DROVE ALONE' ~ 'Driving',
-    LabelGroup3 == 'CARPOOLED' ~ 'Carpooling',
-    LabelGroup2 %in% c('PUBLIC TRANSPORTATION (EXCLUDING TAXICAB)',
-                       'PUBLIC TRANSPORTATION') ~ 'PublicTransit',
-    LabelGroup2 == 'WALKED' ~ 'Walking',
-    LabelGroup2 %in% c('WORKED AT HOME', 'WORKED FROM HOME') ~ 'WorkingFromHome',
-    LabelGroup2 == 'BICYCLE' ~ 'Biking',
-    LabelGroup2 %in% c('MOTORCYCLE', 'TAXICAB', 
-                       'TAXI OR RIDE-HAILING SERVICES', 'OTHER MEANS') ~ 'TaxiAndOther'
-  )) %>% 
-  filter(!is.na(LabelGroup)) %>%
-  select(Year, ZIP, LabelGroup, Population) %>%
-  group_by(Year, ZIP, LabelGroup) %>% summarise(Population = sum(Population)) %>% ungroup() %>%
-  pivot_wider(names_from=LabelGroup, values_from=Population)
-
-print_checkpoint_runtime(Sys.time())
-```
-
-```{r}
-set.seed(55)
-
-zip_codes_all_metrics <- collisions_cleaned %>%
-  filter(OccurredYear >= 2013, OccurredYear <= 2024) %>%
-  left_join(
-    all_coordinates %>%
-      filter(CoordinateType == 'Collision') %>%
-      rowwise() %>%
-      mutate(ZIPCode = ifelse(Backfilled != Frontfilled, 
-                              sample(c(Backfilled, Frontfilled), 1), Backfilled)) %>%
-      select(Latitude, Longitude, ZIPCode), by=c('Latitude', 'Longitude')) %>%
-  left_join(census_by_zip_pivoted %>% mutate(ZIPCode = as.numeric(ZIP)) %>%
-              rename(OccurredYear = Year) %>% select(-ZIP), 
-            by=c('ZIPCode', 'OccurredYear')) %>%
-  left_join(commuting_by_zip_pivoted %>% mutate(ZIPCode = as.numeric(ZIP)) %>%
-              rename(OccurredYear = Year) %>% select(-ZIP), 
-            by=c('ZIPCode', 'OccurredYear')) %>%
+collisions_by_zip_code <- collisions_cleaned %>% filter(OccurredYear >= 2016) %>% 
+  group_by(COVIDPeriod, Year = OccurredYear, ZIPCode) %>% 
+  summarise(
+    AnnualCollisions = n(),
+    AnnualPedestrianCollisions = sum(CollisionWithPedestrian, na.rm=TRUE),
+    AnnualSevereOrFatalInjuries = sum(SevereInjury, na.rm=TRUE) + sum(FatalInjury, na.rm=TRUE)
+  ) %>% left_join(census_data %>% mutate(TotalPopulation = MalePopulation + FemalePopulation), 
+                  by=c('Year', 'ZIPCode')) %>% 
+  left_join(commuting_data, by=c('Year', 'ZIPCode')) %>%
+  left_join(commuting_data_by_age, by=c('Year', 'ZIPCode')) %>%
+  left_join(commuting_data_by_ethnicity, by=c('Year', 'ZIPCode')) %>%
+  left_join(occupations_data, by=c('Year', 'ZIPCode')) %>%
+  left_join(occupations_data_by_ethnicity, by=c('Year', 'ZIPCode')) %>%
+  mutate(
+    OccurredYear = Year,
+    COVIDPeriod = factor(COVIDPeriod, levels=c('Pre-COVID', 'During COVID', 'Post-COVID'))) %>%
   ungroup()
 
-print_checkpoint_runtime(Sys.time())
+collisions_by_zip_code
 ```
 
 ## Comparing the census and commuter data to collisions data
 ```{r}
-population_rates_graph <- function(pop_df, population='', collision_type='', 
-                                   textlabel1 = 'Population Proportion', 
-                                   textlabel2 = 'Collision Proportion', 
-                                   graph_title = paste(population, textlabel1, 'vs', 
-                                                       collision_type, textlabel2, sep=' '),
-                                   victim_threshold = 10, legend_position = 'none') {
- 
+population_rate_box_plots <- function(data_df, demographic_type='', textlabel = demographic_type,
+                                      graph_title = paste('Distributions of Population Proportion by ', 
+                                                          demographic_type, sep=''),
+                                      legend_position='right', text_angle=0, text_hjust=0, text_vjust=0) {
   print(
-    pop_df %>% 
-      filter(OccurredYear >= 2016, OccurredYear <= 2024, OccurredYear != 2020) %>% 
-      rename(
-        TargetFeature1 = as.symbol(local(population)),
-        TargetFeature2 = as.symbol(local(collision_type))
-      ) %>%
-      group_by(ZIPCode, OccurredYear) %>%
-      summarise(
-        TargetFeature1 = first(TargetFeature1),
-        TotalPopulation = first(TotalPopulation),
-        
-        TargetFeature2 = sum(TargetFeature2, na.rm=TRUE),
-        TotalCollisions = n()
-      ) %>%
-      filter(TargetFeature2 >= local(victim_threshold)) %>%
-      mutate(TimePeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID')) %>%
-      group_by(ZIPCode, TimePeriod) %>%
-      summarise(
-        TargetFeature1 = mean(TargetFeature1, na.rm=TRUE),
-        TotalPopulation = mean(TotalPopulation),
-        TargetFeature2 = mean(TargetFeature2),
-        TotalCollisions = mean(TotalCollisions, na.rm=TRUE),
-      ) %>%
-      mutate(
-        PopulationProportion = TargetFeature1/TotalPopulation,
-        VictimRate = TargetFeature2/TotalCollisions
-      ) %>%
-      ggplot(aes(x=PopulationProportion, y=VictimRate, 
-                 color=as.factor(TimePeriod))) +
-      geom_point() +
-      labs(x=local(textlabel1), y=local(textlabel2), 
-           color='Time Period') +
-      theme(legend.position=local(legend_position)) +
-      scale_y_continuous(labels=scales::percent, limits = c(0, NA)) +
-      scale_x_continuous(labels=scales::percent, limits = c(0, NA)) +
-      ggtitle(local(graph_title), subtitle='By ZIP Code in LA, Pre-COVID vs Post-COVID')
-  )  
+    data_df %>%
+      filter(DemographicType == local(demographic_type),
+             Year >= 2016, Year != 2020) %>%
+      mutate(COVIDPeriod = ifelse(Year < 2020, 'Pre-COVID', 'Post-COVID') %>%
+               factor(levels=c('Pre-COVID', 'Post-COVID'))) %>%
+      group_by(COVIDPeriod, ZIPCode, Demographic) %>%
+      summarise(AvgPopulation = mean(Population, na.rm=TRUE),
+                TotalPopulation = mean(TotalPopulation),
+                PopulationProportion = AvgPopulation/TotalPopulation) %>%
+      ggplot(aes(x=Demographic, y=PopulationProportion, fill=COVIDPeriod)) +
+      geom_boxplot() +
+      labs(x=demographic_type, y='Population Proportion', fill='', sep='') +
+      theme(legend.position = local(legend_position),
+            axis.text.x = element_text(angle=local(text_angle), 
+                                       hjust=local(text_hjust), vjust=local(text_vjust))) +
+      scale_y_continuous(labels=scales::percent) +
+      ggtitle(local(graph_title))
+  )
 }
 
-print_checkpoint_runtime(Sys.time())
+commuter_rate_box_plots <- function(data_df, demographic_type='all', textlabel = demographic_type,
+                                    graph_title = paste('Box Plots of Population by ', demographic_type, sep=''),
+                                    legend_position = 'none', text_angle=0, text_hjust=0, text_vjust=0) {
+  print(
+    data_df %>%
+      filter(DemographicType == local(demographic_type)) %>%
+      group_by(ZIPCode, Demographic) %>%
+      summarise(AvgPopulation = mean(Population, na.rm=TRUE)) %>%
+      ggplot(aes(x=Demographic, y=AvgPopulation, fill=Demographic)) +
+      geom_boxplot() +
+      labs(x=demographic_type, y='Population', fill='', sep='') +
+      theme(legend.position = local(legend_position),
+            axis.text.x = element_text(angle=local(text_angle), 
+                                       hjust=local(text_hjust), vjust=local(text_vjust))) +
+      ggtitle(local(graph_title))
+  )
+}
+
 ```
 
 ```{r}
-collision_volume_graphs <- function(pop_df, population = '', collision_type = '', 
-                                    textlabel1 = 'Population', textlabel2 = 'Collision Volume',
-                                    graph_title = paste(population, textlabel1, 'vs', 
-                                                        collision_type, textlabel2, sep=' '),
-                                    victim_threshold = 10, legend_position = 'none',
-                                    bounded_timeframe = TRUE, include_2020 = FALSE) {
+collisions_per_100k_graph <- function(data_df, population='', collision_type='',
+                                      textlabel1 = 'Population Proportion', 
+                                      textlabel2 = 'Collisions per 100k Population', 
+                                      graph_title = paste(textlabel1, 'vs', textlabel2, sep=' '),
+                                      victim_threshold = 10, population_threshold = 5000, 
+                                      legend_position = 'none') {
   print(
-    pop_df %>% 
-      filter( (OccurredYear >= 2016 & OccurredYear <= 2024) |
-               local(!bounded_timeframe),
-             OccurredYear != 2020 | local(include_2020)) %>% 
-      rename(
-        TargetFeature1 = as.symbol(local(population)),
-        TargetFeature2 = as.symbol(local(collision_type))
-      ) %>%
-      group_by(ZIPCode, OccurredYear) %>%
+    data_df %>%
+      filter(COVIDPeriod != 'During COVID') %>%
+      rename(TargetFeature1 = as.symbol(local(population)),
+             TargetFeature2 = as.symbol(local(collision_type))) %>%
+      group_by(COVIDPeriod, ZIPCode) %>%
       summarise(
-        TargetFeature1 = first(TargetFeature1),
-        TargetFeature2 = sum(TargetFeature2, na.rm=TRUE),
+        TotalPopulation = mean(TotalPopulation, na.rm=TRUE),
+        TargetPopulation = mean(TargetFeature1, na.rm=TRUE),
+        AvgAnnualCollisions = mean(TargetFeature2, na.rm=TRUE)
       ) %>%
-      filter(TargetFeature2 >= local(victim_threshold)) %>%
-      mutate(TimePeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID')) %>%
-      group_by(ZIPCode, TimePeriod) %>%
-      summarise(
-        PopulationVolume = mean(TargetFeature1, na.rm=TRUE),
-        CollisionVolume = sum(TargetFeature2),
-      ) %>%
-      ggplot(aes(x=PopulationVolume, y=CollisionVolume, 
-                 color=as.factor(TimePeriod))) +
+      filter(AvgAnnualCollisions > local(victim_threshold),
+             TotalPopulation >= local(population_threshold)) %>%
+      mutate(CollisionsPer100k = 100000*AvgAnnualCollisions/TotalPopulation,
+             TargetPopulationProportion = TargetPopulation/TotalPopulation) %>%
+      ggplot(aes(x=TargetPopulationProportion, y=CollisionsPer100k, color=COVIDPeriod)) +
       geom_point() +
-      labs(x=local(textlabel1), y=local(textlabel2), 
-           color='Time Period') +
-      theme(legend.position=local(legend_position)) +
-      ggtitle(local(graph_title), subtitle='By ZIP Code in LA')
-  )  
+      labs(x=textlabel1, y=textlabel2, color='', sep='') +
+      theme(legend.position = local(legend_position)) +
+      facet_wrap(~COVIDPeriod) + 
+      ggtitle(local(graph_title), subtitle='Pre- and Post-COVID')
+  )
 }
+
+proportion_of_total_by_zip_graph <- function(data_df, population='', collision_type='',
+                                             textlabel1 = 'Proportion of Population', 
+                                             textlabel2 = 'Proportion of Collisions', 
+                                             graph_title = paste(textlabel1, 'vs', textlabel2, sep=' '),
+                                             victim_threshold = 10, population_threshold = 5000, 
+                                             legend_position = 'none') {
+  print(
+    data_df %>%
+      filter(COVIDPeriod != 'During COVID') %>%
+      rename(TargetFeature1 = as.symbol(local(population)),
+             TargetFeature2 = as.symbol(local(collision_type))) %>%
+      group_by(COVIDPeriod, ZIPCode) %>%
+      summarise(
+        ZIPCodePopulation = mean(TotalPopulation, na.rm=TRUE),
+        TargetPopulation = mean(TargetFeature1, na.rm=TRUE),
+        AvgAnnualCollisions = mean(TargetFeature2, na.rm=TRUE)
+      ) %>%
+      group_by(COVIDPeriod) %>% mutate(
+        # TotalPopulation = sum(ZIPCodePopulation, na.rm=TRUE),
+        TotalTargetPopulation = sum(TargetPopulation, na.rm=TRUE),
+        TotalAnnualCollisions = sum(AvgAnnualCollisions, na.rm=TRUE)
+      ) %>% ungroup() %>%
+      filter(AvgAnnualCollisions > local(victim_threshold),
+             ZIPCodePopulation >= local(population_threshold)) %>%
+      mutate(ProportionOfCollisions = AvgAnnualCollisions/TotalAnnualCollisions,
+             TargetPopulationProportion = TargetPopulation/TotalTargetPopulation) %>%
+      ggplot(aes(x=TargetPopulationProportion, y=ProportionOfCollisions, color=COVIDPeriod)) +
+      geom_point() +
+      labs(x=textlabel1, y=textlabel2, color='', sep='') +
+      theme(legend.position = local(legend_position)) +
+      facet_wrap(~COVIDPeriod) + 
+      ggtitle(local(graph_title), subtitle='Pre-COVID vs Post-COVID')
+  )
+}
+
 ```
+
 
 ```{r}
 # for runtime logging

@@ -1,0 +1,320 @@
+---
+title: "Traffic Collisions MO Code Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# MO Code Definitions
+"PCF" stands for "Primary Collision Factor"
+We can try to comprehensively label collision factors, such as types of objects or injuries involved. For example, MO Codes 3004 (vehicle vs vehicle), 3006 (vehicle vs parked vehicle), 3011 (vehicle vs fixed object), 3003 (vehicle vs pedestrian), 3008 (vehicle vs bike), 3009 (vehicle vs motorcycle), and 3012 (vehicle vs other object) comprise a full breakdown of what objects were involved in a collision Note that:
+ - there are some other possible objects that could have been involved in the collision (e.g. MO Code 3016 indicates bike vs vehicle), but these are considered insignificant for the purposes of this project, and
+ - MO Codes do not seem to be comprehensive, as approximately 31000 of 480000 (6.5%) collision records from 2013 through 2024 do not fit any of the above categories for collision objects involved
+ 
+For brevity, we will only look at MO Codes that appear in at least 1% of the collisions from 2013 through 2024. These have already been selected for in the data cleaning
+
+```{r}
+collision_mo_codes_labeled %>%
+  group_by(1) %>% mutate(TotalCollisions = n_distinct(DRKey)) %>% ungroup() %>%
+  group_by(MOCode, Description) %>% 
+  summarise(Collisions = n_distinct(DRKey),
+            ProportionOfCollisions = round(Collisions/first(TotalCollisions), 2)) %>% 
+  arrange(desc(Collisions))
+```
+
+# MO Code Reliability
+## Conflicting MO Codes
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_mo_code_conflicts %>%
+    group_by(OccurredMonth = floor_date(OccurredDate, unit='months')) %>%
+    summarise(PercentWithConflictingMOCodes = mean(ConflictingMOCodes, na.rm=TRUE)) %>%
+    ggplot(aes(x=OccurredMonth, y=PercentWithConflictingMOCodes)) +
+    geom_line() + labs(x='Month of Occurred Date', y='Percentage of Collisions') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Percentage of Collisions with Conflicting MO Codes over Time')
+)
+```
+
+## MO Code Comprehensiveness
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_mo_code_conflicts %>%
+    group_by(OccurredMonth = floor_date(OccurredDate, unit='months')) %>%
+    summarise(PercentWithIncompleteMOCodes = mean(IncompleteMOCodes, na.rm=TRUE)) %>%
+    ggplot(aes(x=OccurredMonth, y=PercentWithIncompleteMOCodes)) +
+    geom_line() + labs(x='Month of Occurred Date', y='Percentage of Collisions') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Percentage of Collisions with Incomplete MO Codes over Time')
+)
+```
+
+## Number of MO Codes per Collision
+```{r, fig.height=5, fig.width=7}
+print(
+  collision_mo_codes_labeled %>%
+    group_by(OccurredMonth = floor_date(OccurredDate, unit='months'), DRKey) %>% 
+    summarise(NumMOCodes = n_distinct(MOCode)) %>%
+    group_by(OccurredMonth) %>% summarise(AvgNumMOCodes = mean(NumMOCodes, na.rm=TRUE)) %>%
+    ggplot(aes(x=OccurredMonth, y=AvgNumMOCodes)) +
+    geom_line() + ylim(0, NA) + 
+    labs(x='Month of Occurred Date', y='Avg Number of MO Codes') +
+    ggtitle('Average Number of MO Code Labels per Collision over Time')
+)
+```
+
+# Comparing Intersections
+The MO Codes for whether a collision occurred at an intersection seem unreliable; through some investigating we can see there are many coordinates that indicate an intersection on a map but are not always labelled as an intersection in the MO Codes, or even labelled as not an intersection. A more reliable indicator seems to be whether the collision address includes a cross street
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>% 
+    group_by(OccurredWeek = floor_date(OccurredDate, unit='months'),
+             CollisionAtIntersection = ifelse(CollisionAtIntersection == 1, 
+                                              'At Intersection', 'Not at Intersection')) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredWeek, y=Collisions, 
+               color=as.factor(CollisionAtIntersection))) +
+    geom_line() + labs(x='Week of Occurred Date', y='Number of Collisions', color='') +
+    ggtitle('Number of Collisions over Time, Intersections vs Non-Intersections')
+)
+```
+
+## Comparing the severity of crashes at intersections vs non-intersections
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    # filter(OccurredYear == 2024) %>%
+    mutate(WasCollisionAtIntersection = ifelse(CollisionAtIntersection == 1, 
+                                               'At Intersection', 'Not at Intersection')) %>%
+    group_by(WasCollisionAtIntersection) %>%
+    mutate(TotalCollisions = n()) %>%
+    group_by(WasCollisionAtIntersection, 
+             MostSevereInjuryReported = factor(
+               MostSevereInjuryReported, 
+               levels = c('Unspecified', 'No Injury', 'Complaint of Injury', 
+                          'Visible Injury', 'Severe Injury', 'Fatal Injury'))) %>%
+    summarise(InjuryRate = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=MostSevereInjuryReported, y=InjuryRate, fill=WasCollisionAtIntersection)) +
+    geom_bar(stat='identity') + facet_wrap(~WasCollisionAtIntersection) + 
+    labs(x='Most Severe Injury Reported', y='Injury Rate', fill = '') +
+    scale_y_continuous(labels=scales::percent) +
+    theme(axis.text.x = element_text(angle = 70, vjust = 1, hjust=1),
+          legend.position='none')
+)
+```
+
+## Looking for dangerous intersections
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(CollisionAtIntersection == 1,
+           OccurredYear == 2024,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>% 
+    mutate(TotalCollisions = n()) %>%
+    ungroup() %>%
+    filter(TotalCollisions > 10) %>%
+    group_by(Latitude, Longitude, 
+             MostSevereInjuryReported = factor(
+               MostSevereInjuryReported, levels = c(
+                 'No Injury', 'Complaint of Injury', 'Visible Injury',
+                 'Severe Injury', 'Fatal Injury', 'Unspecified'))) %>%
+    summarise(InjuryRate = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=InjuryRate, fill=MostSevereInjuryReported)) +
+    geom_histogram(binwidth = 0.1) + 
+    facet_wrap(~MostSevereInjuryReported) + theme(legend.position='none') +
+    scale_x_continuous(labels=scales::percent) +
+    labs(x='Injury Occurrence Rate', y='Number of Intersections') +
+    ggtitle('Distribution of Injury Occurrence Rates by Severity, Intersections in 2024')
+)
+```
+
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(OccurredYear != 2020, OccurredYear >= 2016,
+           CollisionAtIntersection == 1) %>%
+    group_by(COVIDPeriod) %>%
+    mutate(TotalCollisions = n()) %>%
+    group_by(COVIDPeriod, 
+             MostSevereInjuryReported = factor(
+               MostSevereInjuryReported, 
+               levels = c('Unspecified', 'No Injury', 'Complaint of Injury', 
+                          'Visible Injury', 'Severe Injury', 'Fatal Injury'))) %>%
+    summarise(InjuryRate = n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=MostSevereInjuryReported, y=InjuryRate, fill=COVIDPeriod)) +
+    geom_bar(stat='identity') + facet_wrap(~COVIDPeriod) + 
+    labs(x='Most Severe Injury Reported', y='Injury Rate', fill = '') +
+    scale_y_continuous(labels=scales::percent) +
+    theme(axis.text.x = element_text(angle = 70, vjust = 1, hjust=1),
+          legend.position='none')
+)
+```
+
+
+# Collision Object
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_by_object %>%
+    filter(OccurredYear == 2024) %>%
+    group_by(CollisionObject) %>%
+    summarise(InjuryRate = mean(InjuryInvolved, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=InjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    scale_y_continuous(labels = scales::percent) +
+    labs(x='Collision Object', y='Injury Rate') +
+    theme(legend.position='none') +
+    ggtitle('Injury Rate by Collision Object, 2024')
+)
+
+print(
+  collisions_by_object %>%
+    filter(OccurredYear == 2024) %>%
+    mutate(SevereOrFatalInjury = as.numeric(SevereInjury | FatalInjury)) %>%
+    group_by(CollisionObject) %>%
+    summarise(SevereOrFatalInjuryRate = mean(SevereOrFatalInjury, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=SevereOrFatalInjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    scale_y_continuous(labels = scales::percent) +
+    labs(x='Collision Object', y='Severe/Fatal Injury Rate') +
+    theme(legend.position='none') +
+    ggtitle('Severe/Fatal Injury Rate by Collision Object, 2024')
+)
+```
+
+```{r, fig.height=4, fig.width=8}
+print(
+  collisions_by_object %>%
+    filter(OccurredYear != 2020,
+           between(OccurredYear, 2016, 2024)) %>%
+    mutate(COVIDPeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID') %>%
+             factor(levels=c('Pre-COVID', 'Post-COVID'))) %>%
+    group_by(COVIDPeriod, CollisionObject) %>%
+    summarise(InjuryRate = mean(InjuryInvolved, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=InjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    scale_y_continuous(labels = scales::percent) +
+    labs(x='Collision Object', y='Injury Rate') +
+    facet_wrap(~COVIDPeriod) +
+    theme(legend.position='none', 
+          axis.text.x = element_text(angle = 70, vjust = 1, hjust=1)) +
+    ggtitle('Injury Rate by Collision Object, Pre- vs. Post-COVID')
+)
+
+print(
+  collisions_by_object %>%
+    filter(OccurredYear != 2020, OccurredYear >= 2016) %>%
+    mutate(SevereOrFatalInjury = as.numeric(SevereInjury | FatalInjury),
+           COVIDPeriod = ifelse(OccurredYear < 2020, 'Pre-COVID', 'Post-COVID') %>%
+             factor(levels=c('Pre-COVID', 'Post-COVID'))) %>%
+    group_by(COVIDPeriod, CollisionObject) %>%
+    summarise(SevereOrFatalInjuryRate = mean(SevereOrFatalInjury, na.rm=TRUE)) %>%
+    ggplot(aes(x=CollisionObject, y=SevereOrFatalInjuryRate, fill=CollisionObject)) +
+    geom_bar(stat='identity') +
+    scale_y_continuous(labels = scales::percent) +
+    labs(x='Collision Object', y='Severe/Fatal Injury Rate') +
+    facet_wrap(~COVIDPeriod) +
+    theme(legend.position='none', 
+          axis.text.x = element_text(angle = 70, vjust = 1, hjust=1)) +
+    ggtitle('Severe/Fatal Injury Rate by Collision Object, Pre- vs. Post-COVID')
+)
+```
+
+## Finding the intersections with the most/highest rate of pedestrian, bike, or motorccle collisions
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      PedestrianCollisionRate = round(mean(CollisionWithPedestrian), 2)) %>%
+    filter(Collisions > 50) %>%
+    arrange(desc(PedestrianCollisionRate)) %>%
+    ggplot(aes(x=PedestrianCollisionRate)) +
+    geom_histogram()
+)
+
+print(
+  collisions_cleaned %>%
+    filter(CollisionAtIntersection == 1,
+           Latitude != 0, Longitude != 0) %>%
+    group_by(Latitude, Longitude) %>%
+    summarise(
+      Collisions = n(),
+      PedestrianCollisions = sum(CollisionWithPedestrian)) %>%
+    filter(Collisions > 10) %>%
+    ggplot(aes(x=Collisions, y=PedestrianCollisions)) +
+    geom_point()
+)
+
+```
+
+# Observing Features over Time
+## Injury Severity over Time
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned, 'MostSevereInjuryReported', label='Injury Severity')
+```
+## Injury Severity over Time, Unspecified Combined w/ No Injury
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned %>% 
+               mutate(MostSevereInjuryReported = ifelse(MostSevereInjuryReported %in% c('No Injury', 'Unspecified'), 
+                 'No Injury or Unspecified', MostSevereInjuryReported)), 'MostSevereInjuryReported', label='Injury Severity')
+```
+## Collision Objects over Time
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned, 'MostVulnerableCollisionObject', label='Collision Object')
+```
+## Collision Objects over Time, Unspecified Combined w/ Vehicle
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned %>% 
+               mutate(MostVulnerableCollisionObject = ifelse(MostVulnerableCollisionObject %in% c('Unspecified', 'Vehicle'),
+                   'Vehicle or Unspecified', MostVulnerableCollisionObject)), 'MostVulnerableCollisionObject', label='Collision Object')
+```
+## Victim Race/Ethnicity over Time
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned, 'VictimEthnicity', label='Victim Ethnicity')
+```
+
+# Looking into Injury Severity and Potential Causes
+## Injury Severity by collision object
+```{r, fig.height=4, fig.width=7}
+graphing_variable_distributions(collisions_cleaned, 'MostVulnerableCollisionObject', 
+                                'MostSevereInjuryReported', label1='Collision Object', label2='Injury Severity')
+```
+## Injury Severity, Pedestrian Collisions vs Non-Pedestrian Collisions
+```{r, fig.height=5, fig.width=8}
+graphing_variable_distributions(collisions_cleaned %>% mutate(SevereOrFatalInjury = (SevereInjury | FatalInjury)), 
+                                'MostVulnerableCollisionObject', 'SevereOrFatalInjury', 
+                                label1='Collision Object', label2='Severe or Fatal Injuries')
+```
+## Injury Severity over Time, w/o Pedestrian Collisions
+```{r, fig.height=4, fig.width=7}
+intro_graphs(collisions_cleaned %>% filter(CollisionWithPedestrian == 0), 
+             'MostSevereInjuryReported', label='Injury Severity w/o Pedestrians')
+```
+## Injury Severity by Victim Ethnicity
+```{r, fig.height=5, fig.width=8}
+graphing_variable_distributions(collisions_cleaned, 'VictimEthnicity', 
+                                'MostSevereInjuryReported', label1='Victim Ethnicity', label2='Injury Severity')
+```
+## Collision Object by Victim Ethnicity
+```{r, fig.height=5, fig.width=8}
+graphing_variable_distributions(collisions_cleaned, 'VictimEthnicity', 
+                                'MostVulnerableCollisionObject', label1='Victim Ethnicity', label2='Collision Object')
+```

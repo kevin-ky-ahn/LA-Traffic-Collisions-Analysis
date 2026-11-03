@@ -18,27 +18,15 @@ library(tseries)
 ```
 
 # Validating Data for File 3. Data Exploration
-# Checking for intersections with multiple sets of coordinates
+## Checking for intersections with multiple sets of coordinates
 ```{r}
 collisions_cleaned %>% 
   filter(Latitude != 0 | Longitude != 0) %>%
   group_by(Address, CrossStreet, Latitude, Longitude) %>% 
-  summarise(Collisions = n()) %>% 
+  summarise(1) %>% 
   group_by(Address, CrossStreet) %>% 
   summarise(
     NumCoordinates = n(),
-    MaxLat = max(Latitude),
-    MinLat = min(Latitude),
-    MaxLon = max(Longitude),
-    MinLon = min(Longitude),
-    LatRange = MaxLat - MinLat,
-    LonRange = MaxLon - MinLon,
-    LatStd = sd(Latitude),
-    LonStd = sd(Longitude),
-    AvgLat = mean(Latitude),
-    AvgLon = mean(Longitude),
-    ModeLat = mode(Latitude),
-    ModeLon = mode(Longitude)
   ) %>%
   arrange(desc(NumCoordinates))
 ```
@@ -51,11 +39,7 @@ print(collisions_cleaned %>% filter(Address == 'PACIFIC COAST HY', CrossStreet =
         geom_point())
 ```
 
-```{r}
-collisions_cleaned %>% filter(Latitude == 33.9892, Longitude ==	-118.2827)
-```
-
-## Classifying the MO Codes, based on the PDF I found
+## Classifying the MO Codes, based on the PDF
 ```{r}
 collision_mo_codes %>% 
   filter(!is.na(MOCode)) %>%

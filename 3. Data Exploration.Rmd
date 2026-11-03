@@ -18,7 +18,7 @@ library(tseries)
 ```
 
 # Shift in Collision Volume Before/After COVID
-The COVID-19 pandemic and lockdown seems to have had a lasting effect on the number of traffic collisions occuring in LA. We'll explore in later analysis how this is driven by changes in car commuter volume as more workers began to work from home
+The COVID-19 pandemic and quarantine seem to have had a lasting effect on the number of traffic collisions occurring in LA. We'll explore in later analysis how this is driven by changes in car commuter volume as more workers began to work from home
 ```{r, fig.height=5, fig.width=7}
 print(
   collisions_cleaned %>% 
@@ -29,7 +29,7 @@ print(
     filter(NumDays == 7) %>%
     ggplot(aes(x=OccurredDateRounded, y=Collisions, color=COVIDPeriod)) +
     geom_line() +
-    labs(x='Week of Occurred Date', y='Number of Collisions', color='') +
+    labs(x='Week of Collision Occurence', y='Number of Collisions', color='') +
     ggtitle('Influence of COVID Lockdown on Number of Collisions per Week')
 )
 ```
@@ -44,7 +44,7 @@ print(
     ggplot(aes(x=OccurredDateRounded, y=Collisions, color=COVIDPeriod)) +
     geom_line() +
     facet_wrap(~AreaName) +
-    labs(x='Month of Occurred Date', y='Number of Collisions', color='') +
+    labs(x='Month of Collision Occurrence', y='Number of Collisions', color='') +
     ggtitle('Influence of COVID Lockdown on Number of Collisions by AreaName')
 )
 ```
@@ -61,7 +61,21 @@ print(
     summarise(CollisionProportion = n()/first(TotalCollisions)) %>%
     ggplot(aes(x=OccurredTime, y=CollisionProportion, color=COVIDPeriod)) +
     geom_line() + ylim(0, NA) +
-    labs(x='Collision Occurrence Time', y='Distribution of Collisions', color='') +
+    labs(x='Time of Collision Occurrence', y='Distribution of Collisions', color='') +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+    ggtitle('Distribution of Collision Occurrence Times')
+)
+```
+## By volume instead of distribution
+```{r, fig.height=5, fig.width=7}
+print(
+  collisions_cleaned %>%
+    filter(OccurredYear >= 2016) %>%
+    group_by(OccurredTime = floor(OccurredTime/100)*100, COVIDPeriod) %>%
+    summarise(Collisions = n()) %>%
+    ggplot(aes(x=OccurredTime, y=Collisions, color=COVIDPeriod)) +
+    geom_line() + ylim(0, NA) +
+    labs(x='Time of Collision Occurrence', y='Number of Collisions', color='') +
     theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
     ggtitle('Distribution of Collision Occurrence Times')
 )
@@ -83,9 +97,6 @@ print(
     ggtitle('Distribution of Collision Victim Age')
 )
 ```
-```{r}
-collisions_cleaned %>% filter(ZIPCode %>% is.na())
-```
 
 
 ## Sex
@@ -106,7 +117,6 @@ print(
     scale_y_continuous(labels=scales::percent) +
     ggtitle('Distribution of Collision Victim Sex')
 )
-commuting_data_overall
 ```
 
 ## Race and Ethnicity
@@ -125,82 +135,70 @@ print(
 )
 ```
 
-# By Location
-## Scatterplot of Latitude, Longitude, 
-```{r, fig.height=5, fig.width=7}
+## Race/Ethnicity in Conjuction with Sex
+```{r}
 print(
-  collisions_by_coordinates_and_year %>%
-    arrange(TotalCollisions) %>% 
-    filter(Latitude <= local(34.4),
-           Latitude >= local(33.6),
-           Longitude <= local(-118.125),
-           Longitude >= local(-118.75),
-           ) %>%
-    ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
-    geom_point(size=0.5) +
-    facet_wrap(~OccurredYear) +
-    ggtitle(paste0('Total Collisions by Coordinates in ', year, sep=''))
+  collisions_cleaned %>% 
+    filter(OccurredYear > 2016, OccurredYear != 2020) %>%
+    mutate(VictimSex = case_when(VictimSex %in% c('M', 'F') ~ VictimSex, 
+                                 TRUE ~ 'Other or Unknown'),
+           PreCOVIDCollision = COVIDPeriod == 'Pre-COVID',
+           PostCOVIDCollision = COVIDPeriod == 'Post-COVID') %>%
+    group_by(1) %>% mutate(TotalPreCOVIDCollisions = sum(PreCOVIDCollision, na.rm=TRUE),
+                           TotalPostCOVIDCollisions = sum(PostCOVIDCollision, na.rm=TRUE)) %>%
+    ungroup() %>% group_by(VictimSex, VictimEthnicity) %>%
+    summarise(
+      ChangeInProportion = sum(PostCOVIDCollision, na.rm=TRUE)/first(TotalPostCOVIDCollisions) -
+        sum(PreCOVIDCollision, na.rm=TRUE)/first(TotalPreCOVIDCollisions)) %>%
+    ggplot(aes(x=VictimEthnicity, y=ChangeInProportion, fill=VictimSex)) +
+    geom_bar(stat='identity', position='dodge') +
+    labs(x='Collision Victim Race/Ethnicity', y='Change in Proportion of Collisions', fill='Victim Sex') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Change in Collision Victim Race/Ethnicity and Sex After COVID')
 )
 ```
 
+# By Location
+## Scatterplot of Latitude, Longitude, 
 ```{r, fig.width=6, fig.height=3.5}
-for (year in c(2011:2025)) {
+for (year in c(2011:2024)) {
   print(
     collisions_by_coordinates_and_year %>%
-      arrange(StanDevCollisions) %>%
+      arrange(TotalCollisions) %>% 
       filter(OccurredYear == local(year),
-             Latitude <= local(34.4),
-             Latitude >= local(33.6),
-             Longitude <= local(-118.125),
-             Longitude >= local(-118.75),
+             between(Latitude, 33.6, 34.4),
+             between(Longitude, -118.75, -118.125)
              ) %>%
-      ggplot(aes(x=Longitude, y=Latitude, color=StanDevCollisions)) +
-      geom_point(size=2) +
-      ggtitle(paste0('Avg Collisions Per Location by Coordinates in ', year, sep=''))
+      ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
+      geom_point(size=2.5) +
+      ggtitle(paste0('Total Collisions by Coordinates in ', year, sep=''))
   )
 }
 ```
 
-## Check the spread of collision statistics
-```{r}
+```{r, fig.width=8, fig.height=4}
 print(
-  collisions_by_location_2024 %>%
-    ggplot(aes(x=NumCollisionRecords)) +
-    geom_histogram()
+  collisions_by_coordinates_and_year %>%
+    arrange(TotalCollisions) %>% 
+    filter(between(OccurredYear, 2016, 2024),
+           OccurredYear != 2020,
+           between(Latitude, 33.6, 34.4),
+            between(Longitude, -118.75, -118.125)
+           ) %>%
+    mutate(COVIDPeriod = ifelse(
+      OccurredYear < 2020, 'Pre-COVID', 'Post-COVID') %>%
+        factor(levels=c('Pre-COVID', 'Post-COVID'))) %>%
+    group_by(COVIDPeriod, Longitude, Latitude) %>%
+    summarise(TotalCollisions = sum(TotalCollisions, na.rm=TRUE)) %>%
+    ggplot(aes(x=Longitude, y=Latitude, color=TotalCollisions)) +
+    geom_point(size=2.5) + facet_wrap(~COVIDPeriod) + labs(color='Total Collisions') +
+    ggtitle(paste0('Total Collisions by Coordinates, Pre- vs Post-COVID', sep=''))
 )
+
+
 ```
 
-```{r}
-print(
-  collisions_by_location_2024 %>% 
-    ggplot(aes(x=RangeOfCollisions, y=StdCollisions, size=NumCollisionRecords)) +
-    geom_point()
-)
-```
 
-```{r}
-collisions_by_location_2024 %>% arrange(desc(RangeOfCollisions))
-```
-
-```{r}
-collisions_by_location_2024 %>% arrange(desc(StdCollisions))
-```
-
-```{r}
-collisions_cleaned %>%
-  mutate(OccurredYear = year(OccurredDate),
-         RoundedLat = round(Latitude*local(rounding_factor))/local(rounding_factor),
-         RoundedLon = round(Longitude*local(rounding_factor))/local(rounding_factor),
-         ) %>%
-  filter(
-    OccurredYear == 2024,
-    (RoundedLat == 33.99 & RoundedLon == -118.28) |
-    (RoundedLat == 34.22 & RoundedLon == -118.45) |
-    (RoundedLat == 34.03 & RoundedLon == -118.52) |
-    (RoundedLat == 34.04 & RoundedLon == -118.56) 
-  ) %>%
-  group_by(Address, CrossStreet, Latitude, Longitude, RoundedLat, RoundedLon) %>% 
-  summarise(Collisions = n()) %>% arrange(desc(RoundedLat), desc(RoundedLon))
 ```
 
 

@@ -1,0 +1,212 @@
+---
+title: "Traffic Collisions Location Analysis"
+output: html_document
+date: "2026-04-24"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(readxl)
+library(forecast)
+library(tseries)
+library(Morpho)
+options(dplyr.summarise.inform = FALSE)
+options(ggplot2.stat_bin.inform = FALSE)
+```
+
+# Census Data
+## Age trends over time
+```{r, fig.height=5, fig.width=7}
+print(
+  census_data_overall_long %>%
+    filter(DemographicType == 'Age',
+           !(Demographic %in% c('Under 5 Years', '5 to 9 Years'))) %>%
+    mutate(Proportion = Population/TotalPopulation,
+           Demographic = Demographic %>% factor(levels=c(
+        'Under 5 Years', '5 to 9 Years', '10 to 14 Years',
+        '15 to 19 Years', '20 to 24 Years', '25 to 34 Years',
+        '35 to 44 Years', '45 to 54 Years', '55 to 59 Years',
+        '60 to 64 Years', '65 to 74 Years', '75 to 84 Years', 
+        '85 Years and Over'
+      ))) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(y='Population Proportion', color='Age Group') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Age Groups in Relevant LA ZIP Codes')
+)
+
+print(
+  collisions_cleaned %>%
+    filter(!is.na(VictimAge)) %>%
+    mutate(AgeGroup = case_when(
+      VictimUnder5Years ~ 'Under 5 Years',
+      Victim5to9Years ~ '5 to 9 Years',
+      Victim10to14Years ~ '10 to 14 Years',
+      Victim15to19Years ~ '15 to 19 Years',
+      Victim20to24Years ~ '20 to 24 Years',
+      Victim25to34Years ~ '25 to 34 Years',
+      Victim35to44Years ~ '35 to 44 Years',
+      Victim45to54Years ~ '45 to 54 Years',
+      Victim55to59Years ~ '55 to 59 Years',
+      Victim60to64Years ~ '60 to 64 Years',
+      Victim65to74Years ~ '65 to 74 Years',
+      Victim75to84Years ~ '75 to 84 Years',
+      Victim85YearsAndOver ~ '85 Years and Over') %>% factor(levels=c(
+        'Under 5 Years', '5 to 9 Years', '10 to 14 Years',
+        '15 to 19 Years', '20 to 24 Years', '25 to 34 Years',
+        '35 to 44 Years', '45 to 54 Years', '55 to 59 Years',
+        '60 to 64 Years', '65 to 74 Years', '75 to 84 Years', 
+        '85 Years and Over'
+      ))
+    ) %>%
+    group_by(OccurredYear) %>% mutate(TotalCollisions = n()) %>% ungroup() %>%
+    group_by(OccurredYear, AgeGroup) %>% summarise(Proportion=n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=OccurredYear, y=Proportion, color=AgeGroup)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(y='Proportion of Collisions', color='Victim Age') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collisions by Victim Age')
+)
+```
+
+## Race/ethnicity trends over time
+```{r, fig.height=5, fig.width=7}
+print(
+  census_data_overall_long %>%
+    filter(DemographicType == 'Race or Ethnicity') %>%
+    mutate(Proportion = Population/TotalPopulation,
+           Demographic = Demographic %>% factor(levels=c(
+             'Asian', 'Black', 'Hispanic', 'Indigenous', 'Pacific Islander', 
+             'White Non-Hispanic', 'Two or More Races', 'Other Race'
+      ))) %>%
+    ggplot(aes(x=Year, y=Proportion, color=Demographic)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(y='Population Proportion', color='Race/Ethnicity') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Race/Ethnicity in Relevant LA ZIP Codes',
+            subtitle='Note: Hispanic Ethnicity is not mutually exclusive with any Race in census data')
+)
+
+print(
+  collisions_cleaned %>% 
+    mutate(VictimEthnicity = VictimEthnicity %>% factor(levels=c(
+             'Asian', 'Black', 'Hispanic', 'Indigenous', 
+             'Pacific Islander', 'White', 'Other'
+      ))) %>%
+    group_by(OccurredYear) %>% mutate(TotalCollisions = n()) %>% ungroup() %>%
+    group_by(OccurredYear, VictimEthnicity) %>% summarise(Proportion=n()/first(TotalCollisions)) %>%
+    ggplot(aes(x=OccurredYear, y=Proportion, color=VictimEthnicity)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(y='Proportion of Collisions', color='Victim Race/Ethnicity') +
+    scale_y_continuous(labels=scales::percent) +
+    ggtitle('Distribution of Collisions by Victim Race/Ethnicity',
+            subtitle='Hispanic Ethnicity is mutually exclusive with Race in collisions data')
+)
+```
+
+## Map of collisions by race/ethnicity
+```{r, fig.height=5, fig.width=7}
+for (race in c('Asian', 'Black', 'Hispanic', 'White')) {
+  print(
+    collisions_cleaned %>%
+      filter(Latitude != 0, Longitude != 0, 
+             Latitude %>% between(33.6, 34.4),
+             Longitude %>% between(-118.7, -118.1),
+             VictimEthnicity == local(race)) %>%
+      group_by(Latitude = round(Latitude, 3), Longitude = round(Longitude, 3), VictimEthnicity) %>%
+      summarise(Collisions = n()) %>%
+      arrange(Collisions) %>%
+      ggplot(aes(x=Longitude, y=Latitude, color=Collisions)) +
+      geom_point() +
+      xlim(-118.7, -118.1) +
+      ylim(33.6, 34.4) +
+      ggtitle(paste('Collision Density Map for ', local(race), ' Victims', sep=''))
+  )
+}
+```
+
+# Commutes over Time
+## Commuting trends over time
+```{r, fig.height=5, fig.width=7}
+# Proportion of each mode of transportation over time
+print(
+  commuting_data_long %>%
+    filter(!(CommuterType %in% c('Approximate Number of Cars', 'Non-Car'))) %>%
+    mutate(Proportion = round(Commuters/TotalCommuters, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=CommuterType)) +
+    geom_line() +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+
+print(
+  commuting_data_by_sex_long %>%
+    filter(!(CommuterType %in% c('Approximate Number of Cars', 'Non-Car'))) %>%
+    mutate(Proportion = round(Commuters/DemographicCommuters, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=CommuterType)) +
+    geom_line() +
+    facet_wrap(~Demographic) +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+
+print(
+  commuting_data_by_age_long %>%
+    filter(!(CommuterType %in% c('Approximate Number of Cars', 'Non-Car'))) %>%
+    mutate(Proportion = round(Commuters/DemographicCommuters, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=CommuterType)) +
+    geom_line() +
+    facet_wrap(~Demographic) +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+
+print(
+  commuting_data_by_ethnicity_long %>%
+    filter(!(CommuterType %in% c('Approximate Number of Cars', 'Non-Car'))) %>%
+    mutate(Proportion = round(Commuters/DemographicCommuters, 2)) %>%
+    ggplot(aes(x=Year, y=Proportion, color=CommuterType)) +
+    geom_line() +
+    facet_wrap(~Demographic) +
+    theme_set(theme_gray(base_size = 11)) +
+    labs(color='Mode of Transportation') +
+    scale_y_continuous(labels=scales::percent)
+)
+```
+
+# Breaking Down Demographics by ZIP Code
+## Using box plots to check the spread of various features
+```{r}
+population_rate_box_plots(census_data_long_by_zip, demographic_type='Race or Ethnicity', 
+                          text_angle=80, text_hjust=0.95, text_vjust=0.9)
+```
+```{r}
+population_rate_box_plots(census_data_long_by_zip, demographic_type='Age', 
+                          text_angle=80, text_hjust=0.95, text_vjust=0.9)
+```
+## Comparing the census and commuter data to collisions data
+```{r, fig.height=5, fig.width=7}
+collisions_per_100k_graph(collisions_by_zip_code, population='HispanicPopulation', collision_type='AnnualCollisions',
+                          textlabel1='Hispanic Population Proportion', textlabel2='Collisions per 100k Population')
+```
+
+
+```{r, fig.height=5, fig.width=7}
+proportion_of_total_by_zip_graph(collisions_by_zip_code %>% mutate(HumanPopulation = MalePopulation+FemalePopulation), 
+                                 population='HumanPopulation', collision_type='AnnualCollisions',
+                                 textlabel1='Proportion of Population', textlabel2='Proportion of Collisions')
+```
